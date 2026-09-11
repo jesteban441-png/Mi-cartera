@@ -38,9 +38,9 @@ const colorFor = (i) => PALETTE[i % PALETTE.length];
 const PLATFORMS = ['IOL', 'Bullmarket', 'BingX', 'Mercado Pago', 'Otro'];
 
 const DEFAULT_TARGETS = [
-  { id:'t1', name:'ETF S&P 500', ticker:'SPY', platform:'Bullmarket', target:40 },
-  { id:'t2', name:'ETF sectorial tech', ticker:'XLK', platform:'IOL', target:15 },
-  { id:'t3', name:'ETF mercados desarrollados', ticker:'VEA', platform:'IOL', target:10 },
+  { id:'t1', name:'SPY', ticker:'SPY', platform:'Bullmarket', target:40 },
+  { id:'t2', name:'XLK', ticker:'XLK', platform:'IOL', target:15 },
+  { id:'t3', name:'VEA', ticker:'VEA', platform:'IOL', target:10 },
   { id:'t4', name:'ON YPF', ticker:'YFCDO', platform:'IOL', target:5 },
   { id:'t5', name:'ON Pampa', ticker:'MGCEO', platform:'IOL', target:5 },
   { id:'t6', name:'Bitcoin', ticker:'BTC', platform:'BingX', target:10 },
@@ -140,7 +140,7 @@ function AddTargetForm({ onAdd, onCancel }) {
   `;
 }
 
-function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, actualPctByName, hasPositions }) {
+function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget, actualPctByName, hasPositions }) {
   const [view, setView] = useState(hasPositions ? 'real' : 'objetivo');
   const [editingId, setEditingId] = useState(null);
   const pieData = targets
@@ -190,13 +190,18 @@ function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, ad
               <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
             </div>
             ${editingId===t.id && html`
-              <div style=${{ display:'flex', gap:8, marginTop:8, paddingLeft:19 }}>
-                <input value=${t.ticker} onChange=${e=>updateTargetField(t.id,'ticker',e.target.value)} placeholder="Ticker"
-                  style=${{ flex:1, padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
-                <select value=${t.platform} onChange=${e=>updateTargetField(t.id,'platform',e.target.value)}
-                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }}>
-                  ${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}
-                </select>
+              <div style=${{ display:'flex', flexDirection:'column', gap:8, marginTop:8, paddingLeft:19 }}>
+                <input defaultValue=${t.name} onBlur=${e=>renameTarget(t.id, e.target.value)} placeholder="Nombre"
+                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                <div style=${{ display:'flex', gap:8 }}>
+                  <input value=${t.ticker} onChange=${e=>updateTargetField(t.id,'ticker',e.target.value)} placeholder="Ticker"
+                    style=${{ flex:1, padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                  <select value=${t.platform} onChange=${e=>updateTargetField(t.id,'platform',e.target.value)}
+                    style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }}>
+                    ${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}
+                  </select>
+                </div>
+                <p style=${{ fontSize:11, color:C.inkFaint, margin:0 }}>Si cambiás el nombre, tus posiciones ya cargadas con ese activo se renombran solas.</p>
               </div>
             `}
           </div>
@@ -359,6 +364,13 @@ function App() {
   function removeTarget(id) { setTargets(targets.filter(t => t.id !== id)); }
   function updateTargetPct(id, val) { setTargets(targets.map(t => t.id === id ? { ...t, target: val } : t)); }
   function updateTargetField(id, field, value) { setTargets(targets.map(t => t.id === id ? { ...t, [field]: value } : t)); }
+  function renameTarget(id, newName) {
+    const old = targets.find(t => t.id === id);
+    const trimmed = (newName || '').trim();
+    if (!old || !trimmed || trimmed === old.name) return;
+    setTargets(targets.map(t => t.id === id ? { ...t, name: trimmed } : t));
+    setPositions(positions.map(p => p.name === old.name ? { ...p, name: trimmed } : p));
+  }
 
   function addPosition(p) { setPositions([...positions, { ...p, id:'p'+Date.now() }]); setShowAddPosition(false); }
   function removePosition(id) { setPositions(positions.filter(p => p.id !== id)); }
@@ -465,7 +477,7 @@ function App() {
       </div>
 
       ${tab === 'objetivo' && html`<${ObjetivoPanel} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
-          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField}
+          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
           actualPctByName=${actualPctByName} hasPositions=${withDerived.length>0} />`}
 
       ${tab === 'portfolio' && html`<${PortfolioPanel}
