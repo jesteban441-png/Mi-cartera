@@ -35,10 +35,10 @@ const C = {
 };
 const PALETTE = ['#0E6B5C','#C98A2C','#3B6E8F','#8C7355','#7A4F8C','#B3392C','#4F7A3D','#2A5C8A','#A85C3B','#5B5B8C'];
 const colorFor = (i) => PALETTE[i % PALETTE.length];
-const PLATFORMS = ['IOL', 'BingX', 'Mercado Pago', 'Otro'];
+const PLATFORMS = ['IOL', 'Bullmarket', 'BingX', 'Mercado Pago', 'Otro'];
 
 const DEFAULT_TARGETS = [
-  { id:'t1', name:'ETF S&P 500', ticker:'SPY', platform:'IOL', target:40 },
+  { id:'t1', name:'ETF S&P 500', ticker:'SPY', platform:'Bullmarket', target:40 },
   { id:'t2', name:'ETF sectorial tech', ticker:'XLK', platform:'IOL', target:15 },
   { id:'t3', name:'ETF mercados desarrollados', ticker:'VEA', platform:'IOL', target:10 },
   { id:'t4', name:'ON YPF', ticker:'YFCDO', platform:'IOL', target:5 },
@@ -140,17 +140,31 @@ function AddTargetForm({ onAdd, onCancel }) {
   `;
 }
 
-function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct }) {
-  const pieData = targets.filter(t => t.target > 0).map(t => ({ name:t.name, value:t.target, colorIndex: targets.findIndex(x=>x.name===t.name) }));
-  const sumOff = Math.round(targetSum*10)/10 !== 100;
+function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, actualPctByName, hasPositions }) {
+  const [view, setView] = useState(hasPositions ? 'real' : 'objetivo');
+  const [editingId, setEditingId] = useState(null);
+  const pieData = targets
+    .map((t,i) => ({ name:t.name, value: view==='objetivo' ? t.target : Math.round((actualPctByName[t.name]||0)*10)/10, colorIndex:i }))
+    .filter(d => d.value > 0);
+  const sumOff = view==='objetivo' && Math.round(targetSum*10)/10 !== 100;
+
   return html`
     <div>
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
-          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Reparto objetivo</p>
-          <span style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+          <div style=${{ display:'flex', background:C.bg, borderRadius:8, padding:2 }}>
+            ${['real','objetivo'].map(v => html`
+              <button key=${v} onClick=${()=>setView(v)} style=${{
+                padding:'5px 10px', borderRadius:6, border:'none', fontSize:12, fontWeight:500,
+                background: view===v ? C.surface : 'transparent', color: view===v ? C.ink : C.inkSoft,
+              }}>${v==='real' ? 'Real' : 'Objetivo'}</button>
+            `)}
+          </div>
+          ${view==='objetivo' && html`<span style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>`}
         </div>
-        <${DonutChart} data=${pieData} />
+        ${(view==='real' && !hasPositions)
+          ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Todavía no cargaste posiciones — cargalas en "Mi portfolio" para ver tu reparto real acá.</p>`
+          : html`<${DonutChart} data=${pieData} />`}
         ${sumOff && html`<p style=${{ fontSize:12, color:C.danger, margin:'4px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>`}
       </div>
 
@@ -161,16 +175,30 @@ function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, ad
         </div>
         ${showAddTarget && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
         ${targets.map((t,i) => html`
-          <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0', display:'flex', alignItems:'center', gap:10 }}>
-            <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
-            <div style=${{ flex:1, minWidth:0 }}>
-              <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
-              <p style=${{ fontSize:11.5, color:C.inkSoft, margin:'2px 0 0' }}>${t.ticker ? `${t.ticker} · ` : ''}${t.platform}</p>
+          <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0' }}>
+            <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
+              <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
+              <div style=${{ flex:1, minWidth:0 }}>
+                <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
+                <button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
+                  ${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
+                </button>
+              </div>
+              <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
+                style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
+              <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
+              <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
             </div>
-            <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
-              style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
-            <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
-            <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+            ${editingId===t.id && html`
+              <div style=${{ display:'flex', gap:8, marginTop:8, paddingLeft:19 }}>
+                <input value=${t.ticker} onChange=${e=>updateTargetField(t.id,'ticker',e.target.value)} placeholder="Ticker"
+                  style=${{ flex:1, padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                <select value=${t.platform} onChange=${e=>updateTargetField(t.id,'platform',e.target.value)}
+                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }}>
+                  ${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}
+                </select>
+              </div>
+            `}
           </div>
         `)}
       </div>
@@ -330,6 +358,7 @@ function App() {
   function addTarget(t) { setTargets([...targets, { ...t, id:'c'+Date.now() }]); setShowAddTarget(false); }
   function removeTarget(id) { setTargets(targets.filter(t => t.id !== id)); }
   function updateTargetPct(id, val) { setTargets(targets.map(t => t.id === id ? { ...t, target: val } : t)); }
+  function updateTargetField(id, field, value) { setTargets(targets.map(t => t.id === id ? { ...t, [field]: value } : t)); }
 
   function addPosition(p) { setPositions([...positions, { ...p, id:'p'+Date.now() }]); setShowAddPosition(false); }
   function removePosition(id) { setPositions(positions.filter(p => p.id !== id)); }
@@ -360,13 +389,15 @@ function App() {
       const data = await r.json();
       if (!data.ok) { setLiveStatus('Error del servidor: ' + data.error); setLiveLoading(false); return; }
       let updated = 0;
-      const newPositions = positions.map(p => {
-        const price = data.prices[p.name];
-        if (price) { updated++; return { ...p, currentPrice: price }; }
-        return p;
+      setPositions(prev => {
+        const next = prev.map(p => {
+          const price = data.prices[p.name];
+          if (price) { updated++; return { ...p, currentPrice: price }; }
+          return p;
+        });
+        return next;
       });
-      setPositions(newPositions);
-      let msg = `Actualizadas ${updated} de ${positions.length} posiciones.`;
+      let msg = `Actualizadas ${updated} posiciones.`;
       if (data.notFound && data.notFound.length) msg += ` Sin precio para: ${data.notFound.join(', ')}.`;
       setLiveStatus(msg);
     } catch (e) {
@@ -374,6 +405,12 @@ function App() {
     }
     setLiveLoading(false);
   }
+
+  useEffect(() => {
+    if (positions.length > 0) fetchLivePrices();
+    // se ejecuta una sola vez al abrir la app
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const withDerived = positions.map(p => {
     const invested = p.units * p.avgPrice;
@@ -396,6 +433,15 @@ function App() {
     return rows;
   }, [targets, withDerived, totalValue]);
 
+  const actualPctByName = useMemo(() => {
+    const map = {};
+    targets.forEach(t => {
+      const val = withDerived.filter(p => p.name === t.name).reduce((s,p) => s + p.value, 0);
+      map[t.name] = totalValue ? val/totalValue*100 : 0;
+    });
+    return map;
+  }, [targets, withDerived, totalValue]);
+
   const platformTotals = useMemo(() => {
     const map = {};
     withDerived.forEach(p => { map[p.platform] = (map[p.platform]||0) + p.value; });
@@ -405,7 +451,7 @@ function App() {
   return html`
     <div>
       <h1 className="serif" style=${{ fontSize:22, fontWeight:500, margin:'0 0 2px' }}>Mi cartera en pesos</h1>
-      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Tu estrategia real, con precios que podés actualizar en un toque.</p>
+      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Tu estrategia real, con precios que se actualizan solos al abrir.</p>
 
       <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20 }}>
         ${[['objetivo','Cartera objetivo'],['portfolio','Mi portfolio']].map(([k,label]) => html`
@@ -419,7 +465,8 @@ function App() {
       </div>
 
       ${tab === 'objetivo' && html`<${ObjetivoPanel} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
-          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} />`}
+          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField}
+          actualPctByName=${actualPctByName} hasPositions=${withDerived.length>0} />`}
 
       ${tab === 'portfolio' && html`<${PortfolioPanel}
           withDerived=${withDerived} totalValue=${totalValue} totalInvested=${totalInvested} totalPL=${totalPL} totalPLPct=${totalPLPct}
@@ -432,8 +479,8 @@ function App() {
 
       <p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:28, lineHeight:1.6 }}>
         Herramienta personal y educativa, no es asesoramiento financiero. Los precios en vivo vienen de fuentes públicas
-        gratuitas (data912.com, dolarapi.com y CoinGecko), no oficiales ni garantizadas — pueden tener demoras o algún dato faltante.
-        Para decisiones importantes, confirmá siempre en IOL o BingX.
+        gratuitas (data912.com, dolarapi.com y CoinGecko), no oficiales ni garantizadas. Para decisiones importantes,
+        confirmá siempre en IOL, Bullmarket o BingX.
       </p>
     </div>
   `;
