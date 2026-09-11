@@ -9,7 +9,6 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
   :root{
     --bg:#F4F5F1; --surface:#fff; --ink:#16201E; --ink-soft:#5B6B66; --ink-faint:#93A39D;
@@ -24,9 +23,12 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
-<script type="text/babel" data-presets="react">
+<div id="root">Cargando…</div>
+<script type="module">
+import htm from 'https://unpkg.com/htm@3.1.1?module';
 const { useState, useEffect, useMemo, useRef } = React;
+const html = htm.bind(React.createElement);
+
 const C = {
   bg:'#F4F5F1', surface:'#FFFFFF', ink:'#16201E', inkSoft:'#5B6B66', inkFaint:'#93A39D',
   accent:'#0E6B5C', accentSoft:'#DCEDE9', amber:'#C98A2C', danger:'#B3392C', border:'rgba(22,32,30,0.14)',
@@ -35,8 +37,6 @@ const PALETTE = ['#0E6B5C','#C98A2C','#3B6E8F','#8C7355','#7A4F8C','#B3392C','#4
 const colorFor = (i) => PALETTE[i % PALETTE.length];
 const PLATFORMS = ['IOL', 'BingX', 'Mercado Pago', 'Otro'];
 
-// Ticker = el símbolo que usa /api/precios para buscar el precio en vivo.
-// Dejalo vacío si el activo no tiene un ticker único (ej: "Acciones argentinas" como categoría).
 const DEFAULT_TARGETS = [
   { id:'t1', name:'ETF S&P 500', ticker:'SPY', platform:'IOL', target:40 },
   { id:'t2', name:'ETF sectorial tech', ticker:'XLK', platform:'IOL', target:15 },
@@ -70,7 +70,7 @@ function DonutChart({ data }) {
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
-  return <div style={{ position:'relative', height:230 }}><canvas ref={canvasRef}></canvas></div>;
+  return html`<div style=${{ position:'relative', height:230 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
 function ComparisonChart({ data }) {
@@ -97,7 +97,219 @@ function ComparisonChart({ data }) {
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
-  return <div style={{ position:'relative', height }}><canvas ref={canvasRef}></canvas></div>;
+  return html`<div style=${{ position:'relative', height }}><canvas ref=${canvasRef}></canvas></div>`;
+}
+
+function MetricCard({ label, value, tone }) {
+  const color = tone==='up' ? C.accent : tone==='down' ? C.danger : C.ink;
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:'12px 14px' }}>
+      <p style=${{ fontSize:11.5, color:C.inkSoft, margin:'0 0 4px' }}>${label}</p>
+      <p className="serif" style=${{ fontSize:18, fontWeight:500, margin:0, color }}>${value}</p>
+    </div>
+  `;
+}
+
+function AddTargetForm({ onAdd, onCancel }) {
+  const [name, setName] = useState(''); const [ticker, setTicker] = useState('');
+  const [platform, setPlatform] = useState(PLATFORMS[0]); const [target, setTarget] = useState(''); const [error, setError] = useState('');
+  function submit() {
+    const t = parseFloat(target);
+    if (!name.trim()) return setError('Poné un nombre para el activo');
+    if (!(t >= 0)) return setError('El porcentaje objetivo tiene que ser 0 o más');
+    setError(''); onAdd({ name:name.trim(), ticker:ticker.trim(), platform, target:t });
+  }
+  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
+  const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
+  return html`
+    <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
+      <label style=${labelStyle}>Nombre<input style=${inputStyle} value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: Oro" /></label>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
+        <label style=${labelStyle}>Ticker (opcional)<input style=${inputStyle} value=${ticker} onChange=${e=>setTicker(e.target.value)} placeholder="Ej: GOLD" /></label>
+        <label style=${labelStyle}>Plataforma
+          <select style=${inputStyle} value=${platform} onChange=${e=>setPlatform(e.target.value)}>${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}</select>
+        </label>
+      </div>
+      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>% objetivo<input style=${inputStyle} type="number" step="any" value=${target} onChange=${e=>setTarget(e.target.value)} /></label>
+      ${error && html`<p style=${{ fontSize:12, color:C.danger, marginTop:8 }}>${error}</p>`}
+      <div style=${{ display:'flex', gap:8, marginTop:12 }}>
+        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Guardar</button>
+        <button onClick=${onCancel} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct }) {
+  const pieData = targets.filter(t => t.target > 0).map(t => ({ name:t.name, value:t.target, colorIndex: targets.findIndex(x=>x.name===t.name) }));
+  const sumOff = Math.round(targetSum*10)/10 !== 100;
+  return html`
+    <div>
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Reparto objetivo</p>
+          <span style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>
+        </div>
+        <${DonutChart} data=${pieData} />
+        ${sumOff && html`<p style=${{ fontSize:12, color:C.danger, margin:'4px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>`}
+      </div>
+
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Activos</p>
+          <button onClick=${() => setShowAddTarget(!showAddTarget)} style=${{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
+        </div>
+        ${showAddTarget && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
+        ${targets.map((t,i) => html`
+          <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0', display:'flex', alignItems:'center', gap:10 }}>
+            <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
+            <div style=${{ flex:1, minWidth:0 }}>
+              <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
+              <p style=${{ fontSize:11.5, color:C.inkSoft, margin:'2px 0 0' }}>${t.ticker ? `${t.ticker} · ` : ''}${t.platform}</p>
+            </div>
+            <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
+              style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
+            <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
+            <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function BulkUpdateForm({ onApply, onClose }) {
+  const [text, setText] = useState(''); const [result, setResult] = useState(null);
+  function apply() { setResult(onApply(text)); }
+  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4, fontFamily:'monospace', minHeight:90, resize:'vertical', boxSizing:'border-box' };
+  return html`
+    <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
+      <p style=${{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por activo: nombre, dos puntos, precio (punto para decimales).</p>
+      <textarea style=${inputStyle} value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'ETF S&P 500: 550.23\nBitcoin: 61234000'}></textarea>
+      ${result && html`<p style=${{ fontSize:12, color: result.unmatched.length ? C.amber : C.accent, marginTop:8 }}>Actualizadas ${result.matched} de ${result.total}.${result.unmatched.length>0 ? ` No encontré: ${result.unmatched.join(' · ')}` : ''}</p>`}
+      <div style=${{ display:'flex', gap:8, marginTop:12 }}>
+        <button onClick=${apply} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Aplicar</button>
+        <button onClick=${onClose} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cerrar</button>
+      </div>
+    </div>
+  `;
+}
+
+function AddPositionForm({ targets, onAdd, onCancel }) {
+  const [name, setName] = useState(''); const [platform, setPlatform] = useState(PLATFORMS[0]);
+  const [units, setUnits] = useState(''); const [avgPrice, setAvgPrice] = useState(''); const [currentPrice, setCurrentPrice] = useState(''); const [error, setError] = useState('');
+  function submit() {
+    const u = parseFloat(units), a = parseFloat(avgPrice), c = parseFloat(currentPrice);
+    if (!name.trim()) return setError('Poné o elegí un nombre para el activo');
+    if (!(u > 0)) return setError('Las unidades tienen que ser mayores a 0');
+    if (!(a > 0)) return setError('El precio de compra tiene que ser mayor a 0');
+    if (!(c > 0)) return setError('El precio actual tiene que ser mayor a 0');
+    setError(''); onAdd({ name:name.trim(), platform, units:u, avgPrice:a, currentPrice:c });
+  }
+  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
+  const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
+  return html`
+    <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
+      <label style=${labelStyle}>Nombre del activo
+        <input style=${inputStyle} list="target-names" value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: ETF S&P 500" />
+        <datalist id="target-names">${targets.map(t=>html`<option key=${t.id} value=${t.name} />`)}</datalist>
+      </label>
+      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Plataforma
+        <select style=${inputStyle} value=${platform} onChange=${e=>setPlatform(e.target.value)}>${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}</select>
+      </label>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
+        <label style=${labelStyle}>Unidades<input style=${inputStyle} type="number" step="any" value=${units} onChange=${e=>setUnits(e.target.value)} /></label>
+        <label style=${labelStyle}>Precio compra (ARS)<input style=${inputStyle} type="number" step="any" value=${avgPrice} onChange=${e=>setAvgPrice(e.target.value)} /></label>
+      </div>
+      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Precio actual (ARS)<input style=${inputStyle} type="number" step="any" value=${currentPrice} onChange=${e=>setCurrentPrice(e.target.value)} /></label>
+      ${error && html`<p style=${{ fontSize:12, color:C.danger, marginTop:8 }}>${error}</p>`}
+      <div style=${{ display:'flex', gap:8, marginTop:12 }}>
+        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Guardar</button>
+        <button onClick=${onCancel} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+function PortfolioPanel({ withDerived, totalValue, totalInvested, totalPL, totalPLPct, comparisonData, platformTotals, targets, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice, showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading }) {
+  return html`
+    <div>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+        <${MetricCard} label="Valor total" value=${fmtARS(totalValue)} />
+        <${MetricCard} label="Invertido" value=${fmtARS(totalInvested)} />
+        <${MetricCard} label="Ganancia / pérdida" value=${fmtARS(totalPL)} tone=${totalPL>=0?'up':'down'} />
+        <${MetricCard} label="Variación" value=${fmtPct(totalPLPct)} tone=${totalPL>=0?'up':'down'} />
+      </div>
+
+      ${platformTotals.length > 0 && html`
+        <div style=${{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:16 }}>
+          ${platformTotals.map(([plat,val]) => html`
+            <span key=${plat} style=${{ fontSize:12, color:C.inkSoft, background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:7, padding:'5px 10px' }}>
+              ${plat}: <strong style=${{ color:C.ink, fontWeight:500 }}>${fmtARS(val)}</strong>
+            </span>
+          `)}
+        </div>
+      `}
+
+      ${withDerived.length > 0 && html`
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Actual vs. objetivo</p>
+          <${ComparisonChart} data=${comparisonData} />
+        </div>
+      `}
+
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Posiciones</p>
+          <div style=${{ display:'flex', gap:8 }}>
+            ${withDerived.length > 0 && html`
+              <button onClick=${fetchLivePrices} disabled=${liveLoading} style=${{ border:`1px solid ${C.accent}`, background: 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>
+                ${liveLoading ? 'Buscando...' : '↻ Precios en vivo'}
+              </button>
+            `}
+            <button onClick=${() => setShowAddPosition(!showAddPosition)} style=${{ border:`1px solid ${C.accent}`, background: showAddPosition ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
+          </div>
+        </div>
+        ${liveStatus && html`<p style=${{ fontSize:12, color:C.inkSoft, marginBottom:10, lineHeight:1.5 }}>${liveStatus}</p>`}
+
+        ${withDerived.length > 0 && html`
+          <button onClick=${() => setShowBulkUpdate(!showBulkUpdate)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:12, padding:0, marginBottom:12, textDecoration:'underline' }}>
+            ${showBulkUpdate ? 'ocultar' : 'o pegar precios a mano'}
+          </button>
+        `}
+        ${showBulkUpdate && html`<${BulkUpdateForm} onApply=${bulkUpdatePrices} onClose=${() => setShowBulkUpdate(false)} />`}
+        ${showAddPosition && html`<${AddPositionForm} targets=${targets} onAdd=${addPosition} onCancel=${() => setShowAddPosition(false)} />`}
+
+        ${withDerived.length === 0 && !showAddPosition && html`
+          <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Todavía no cargaste ninguna posición. Agregá la primera para comparar contra tu cartera objetivo.</p>
+        `}
+
+        ${withDerived.map(p => html`
+          <div key=${p.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'12px 0' }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
+              <div>
+                <p style=${{ fontSize:14, fontWeight:500, margin:0 }}>${p.name}</p>
+                <span style=${{ fontSize:11, color:C.inkSoft, background:C.bg, padding:'2px 7px', borderRadius:5, display:'inline-block', marginTop:4 }}>${p.platform}</span>
+              </div>
+              <button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+            </div>
+            <div style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}</div>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <label style=${{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
+                Precio actual
+                <input type="number" step="any" defaultValue=${p.currentPrice} onBlur=${e => updateCurrentPrice(p.id, parseFloat(e.target.value)||0)}
+                  style=${{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+              </label>
+              <div style=${{ textAlign:'right' }}>
+                <p style=${{ fontSize:13.5, fontWeight:500, margin:0 }}>${fmtARS(p.value)}</p>
+                <p style=${{ fontSize:12, margin:0, color: p.pl>=0 ? C.accent : C.danger }}>${p.pl>=0?'▲':'▼'} ${fmtPct(p.plPct)}</p>
+              </div>
+            </div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
 }
 
 function App() {
@@ -158,7 +370,7 @@ function App() {
       if (data.notFound && data.notFound.length) msg += ` Sin precio para: ${data.notFound.join(', ')}.`;
       setLiveStatus(msg);
     } catch (e) {
-      setLiveStatus('No se pudo conectar con /api/precios (¿ya lo desplegaste en Vercel?): ' + e.message);
+      setLiveStatus('No se pudo conectar con /api/precios: ' + e.message);
     }
     setLiveLoading(false);
   }
@@ -190,260 +402,44 @@ function App() {
     return Object.entries(map).filter(([,v]) => v > 0);
   }, [withDerived]);
 
-  return (
+  return html`
     <div>
-      <h1 className="serif" style={{ fontSize:22, fontWeight:500, margin:'0 0 2px' }}>Mi cartera en pesos</h1>
-      <p style={{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Tu estrategia real, con precios que podés actualizar en un toque.</p>
+      <h1 className="serif" style=${{ fontSize:22, fontWeight:500, margin:'0 0 2px' }}>Mi cartera en pesos</h1>
+      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Tu estrategia real, con precios que podés actualizar en un toque.</p>
 
-      <div style={{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20 }}>
-        {[['objetivo','Cartera objetivo'],['portfolio','Mi portfolio']].map(([k,label]) => (
-          <button key={k} onClick={() => setTab(k)} style={{
+      <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20 }}>
+        ${[['objetivo','Cartera objetivo'],['portfolio','Mi portfolio']].map(([k,label]) => html`
+          <button key=${k} onClick=${() => setTab(k)} style=${{
             flex:1, padding:'9px 4px', borderRadius:7, border:'none',
             fontSize:13, fontWeight:500,
             background: tab===k ? C.accent : 'transparent',
             color: tab===k ? '#fff' : C.inkSoft,
-          }}>{label}</button>
-        ))}
+          }}>${label}</button>
+        `)}
       </div>
 
-      {tab === 'objetivo' && (
-        <ObjetivoPanel targets={targets} targetSum={targetSum} showAddTarget={showAddTarget} setShowAddTarget={setShowAddTarget}
-          addTarget={addTarget} removeTarget={removeTarget} updateTargetPct={updateTargetPct} />
-      )}
+      ${tab === 'objetivo' && html`<${ObjetivoPanel} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
+          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} />`}
 
-      {tab === 'portfolio' && (
-        <PortfolioPanel
-          withDerived={withDerived} totalValue={totalValue} totalInvested={totalInvested} totalPL={totalPL} totalPLPct={totalPLPct}
-          comparisonData={comparisonData} platformTotals={platformTotals} targets={targets}
-          showAddPosition={showAddPosition} setShowAddPosition={setShowAddPosition}
-          addPosition={addPosition} removePosition={removePosition} updateCurrentPrice={updateCurrentPrice}
-          showBulkUpdate={showBulkUpdate} setShowBulkUpdate={setShowBulkUpdate} bulkUpdatePrices={bulkUpdatePrices}
-          fetchLivePrices={fetchLivePrices} liveStatus={liveStatus} liveLoading={liveLoading}
-        />
-      )}
+      ${tab === 'portfolio' && html`<${PortfolioPanel}
+          withDerived=${withDerived} totalValue=${totalValue} totalInvested=${totalInvested} totalPL=${totalPL} totalPLPct=${totalPLPct}
+          comparisonData=${comparisonData} platformTotals=${platformTotals} targets=${targets}
+          showAddPosition=${showAddPosition} setShowAddPosition=${setShowAddPosition}
+          addPosition=${addPosition} removePosition=${removePosition} updateCurrentPrice=${updateCurrentPrice}
+          showBulkUpdate=${showBulkUpdate} setShowBulkUpdate=${setShowBulkUpdate} bulkUpdatePrices=${bulkUpdatePrices}
+          fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
+        />`}
 
-      <p style={{ fontSize:11.5, color:C.inkFaint, marginTop:28, lineHeight:1.6 }}>
+      <p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:28, lineHeight:1.6 }}>
         Herramienta personal y educativa, no es asesoramiento financiero. Los precios en vivo vienen de fuentes públicas
-        gratuitas (data912.com y CoinGecko), no oficiales ni garantizadas — pueden tener demoras o algún dato faltante.
+        gratuitas (data912.com, dolarapi.com y CoinGecko), no oficiales ni garantizadas — pueden tener demoras o algún dato faltante.
         Para decisiones importantes, confirmá siempre en IOL o BingX.
       </p>
     </div>
-  );
+  `;
 }
 
-function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct }) {
-  const pieData = targets.filter(t => t.target > 0).map(t => ({ name:t.name, value:t.target, colorIndex: targets.findIndex(x=>x.name===t.name) }));
-  const sumOff = Math.round(targetSum*10)/10 !== 100;
-  return (
-    <div>
-      <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
-          <p style={{ fontSize:13, fontWeight:500, margin:0 }}>Reparto objetivo</p>
-          <span style={{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>{fmtPct(targetSum)} {sumOff ? '' : '✓'}</span>
-        </div>
-        <DonutChart data={pieData} />
-        {sumOff && <p style={{ fontSize:12, color:C.danger, margin:'4px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>}
-      </div>
-
-      <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-          <p style={{ fontSize:13, fontWeight:500, margin:0 }}>Activos</p>
-          <button onClick={() => setShowAddTarget(!showAddTarget)} style={{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
-        </div>
-        {showAddTarget && <AddTargetForm onAdd={addTarget} onCancel={() => setShowAddTarget(false)} />}
-        {targets.map((t,i) => (
-          <div key={t.id} style={{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0', display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }} />
-            <div style={{ flex:1, minWidth:0 }}>
-              <p style={{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{t.name}</p>
-              <p style={{ fontSize:11.5, color:C.inkSoft, margin:'2px 0 0' }}>{t.ticker ? `${t.ticker} · ` : ''}{t.platform}</p>
-            </div>
-            <input type="number" step="any" value={t.target} onChange={e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
-              style={{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
-            <span style={{ fontSize:12.5, color:C.inkSoft }}>%</span>
-            <button onClick={() => removeTarget(t.id)} aria-label="Eliminar" style={{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AddTargetForm({ onAdd, onCancel }) {
-  const [name, setName] = useState(''); const [ticker, setTicker] = useState('');
-  const [platform, setPlatform] = useState(PLATFORMS[0]); const [target, setTarget] = useState(''); const [error, setError] = useState('');
-  function submit() {
-    const t = parseFloat(target);
-    if (!name.trim()) return setError('Poné un nombre para el activo');
-    if (!(t >= 0)) return setError('El porcentaje objetivo tiene que ser 0 o más');
-    setError(''); onAdd({ name:name.trim(), ticker:ticker.trim(), platform, target:t });
-  }
-  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
-  const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
-  return (
-    <div style={{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
-      <label style={labelStyle}>Nombre<input style={inputStyle} value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Oro" /></label>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
-        <label style={labelStyle}>Ticker (opcional)<input style={inputStyle} value={ticker} onChange={e=>setTicker(e.target.value)} placeholder="Ej: GOLD" /></label>
-        <label style={labelStyle}>Plataforma
-          <select style={inputStyle} value={platform} onChange={e=>setPlatform(e.target.value)}>{PLATFORMS.map(p=><option key={p} value={p}>{p}</option>)}</select>
-        </label>
-      </div>
-      <label style={{ ...labelStyle, marginTop:10, display:'block' }}>% objetivo<input style={inputStyle} type="number" step="any" value={target} onChange={e=>setTarget(e.target.value)} /></label>
-      {error && <p style={{ fontSize:12, color:C.danger, marginTop:8 }}>{error}</p>}
-      <div style={{ display:'flex', gap:8, marginTop:12 }}>
-        <button onClick={submit} style={{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Guardar</button>
-        <button onClick={onCancel} style={{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
-      </div>
-    </div>
-  );
-}
-
-function PortfolioPanel({ withDerived, totalValue, totalInvested, totalPL, totalPLPct, comparisonData, platformTotals, targets, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice, showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading }) {
-  return (
-    <div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
-        <MetricCard label="Valor total" value={fmtARS(totalValue)} />
-        <MetricCard label="Invertido" value={fmtARS(totalInvested)} />
-        <MetricCard label="Ganancia / pérdida" value={fmtARS(totalPL)} tone={totalPL>=0?'up':'down'} />
-        <MetricCard label="Variación" value={fmtPct(totalPLPct)} tone={totalPL>=0?'up':'down'} />
-      </div>
-
-      {platformTotals.length > 0 && (
-        <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:16 }}>
-          {platformTotals.map(([plat,val]) => (
-            <span key={plat} style={{ fontSize:12, color:C.inkSoft, background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:7, padding:'5px 10px' }}>
-              {plat}: <strong style={{ color:C.ink, fontWeight:500 }}>{fmtARS(val)}</strong>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {withDerived.length > 0 && (
-        <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-          <p style={{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Actual vs. objetivo</p>
-          <ComparisonChart data={comparisonData} />
-        </div>
-      )}
-
-      <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
-          <p style={{ fontSize:13, fontWeight:500, margin:0 }}>Posiciones</p>
-          <div style={{ display:'flex', gap:8 }}>
-            {withDerived.length > 0 && (
-              <button onClick={fetchLivePrices} disabled={liveLoading} style={{ border:`1px solid ${C.accent}`, background: 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>
-                {liveLoading ? 'Buscando...' : '↻ Precios en vivo'}
-              </button>
-            )}
-            <button onClick={() => setShowAddPosition(!showAddPosition)} style={{ border:`1px solid ${C.accent}`, background: showAddPosition ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
-          </div>
-        </div>
-        {liveStatus && <p style={{ fontSize:12, color:C.inkSoft, marginBottom:10, lineHeight:1.5 }}>{liveStatus}</p>}
-
-        {withDerived.length > 0 && (
-          <button onClick={() => setShowBulkUpdate(!showBulkUpdate)} style={{ border:'none', background:'none', color:C.inkFaint, fontSize:12, padding:0, marginBottom:12, textDecoration:'underline' }}>
-            {showBulkUpdate ? 'ocultar' : 'o pegar precios a mano'}
-          </button>
-        )}
-        {showBulkUpdate && <BulkUpdateForm onApply={bulkUpdatePrices} onClose={() => setShowBulkUpdate(false)} />}
-        {showAddPosition && <AddPositionForm targets={targets} onAdd={addPosition} onCancel={() => setShowAddPosition(false)} />}
-
-        {withDerived.length === 0 && !showAddPosition && (
-          <p style={{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Todavía no cargaste ninguna posición. Agregá la primera para comparar contra tu cartera objetivo.</p>
-        )}
-
-        {withDerived.map(p => (
-          <div key={p.id} style={{ borderTop:`0.5px solid ${C.border}`, padding:'12px 0' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
-              <div>
-                <p style={{ fontSize:14, fontWeight:500, margin:0 }}>{p.name}</p>
-                <span style={{ fontSize:11, color:C.inkSoft, background:C.bg, padding:'2px 7px', borderRadius:5, display:'inline-block', marginTop:4 }}>{p.platform}</span>
-              </div>
-              <button onClick={() => removePosition(p.id)} aria-label="Eliminar posición" style={{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
-            </div>
-            <div style={{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>{p.units} un. · compra {fmtARS(p.avgPrice)}</div>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-              <label style={{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
-                Precio actual
-                <input type="number" step="any" defaultValue={p.currentPrice} onBlur={e => updateCurrentPrice(p.id, parseFloat(e.target.value)||0)}
-                  style={{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
-              </label>
-              <div style={{ textAlign:'right' }}>
-                <p style={{ fontSize:13.5, fontWeight:500, margin:0 }}>{fmtARS(p.value)}</p>
-                <p style={{ fontSize:12, margin:0, color: p.pl>=0 ? C.accent : C.danger }}>{p.pl>=0?'▲':'▼'} {fmtPct(p.plPct)}</p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function MetricCard({ label, value, tone }) {
-  const color = tone==='up' ? C.accent : tone==='down' ? C.danger : C.ink;
-  return (
-    <div style={{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:'12px 14px' }}>
-      <p style={{ fontSize:11.5, color:C.inkSoft, margin:'0 0 4px' }}>{label}</p>
-      <p className="serif" style={{ fontSize:18, fontWeight:500, margin:0, color }}>{value}</p>
-    </div>
-  );
-}
-
-function BulkUpdateForm({ onApply, onClose }) {
-  const [text, setText] = useState(''); const [result, setResult] = useState(null);
-  function apply() { setResult(onApply(text)); }
-  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4, fontFamily:'monospace', minHeight:90, resize:'vertical', boxSizing:'border-box' };
-  return (
-    <div style={{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
-      <p style={{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por activo: nombre, dos puntos, precio (punto para decimales).</p>
-      <textarea style={inputStyle} value={text} onChange={e=>setText(e.target.value)} placeholder={'ETF S&P 500: 550.23\nBitcoin: 61234000'} />
-      {result && <p style={{ fontSize:12, color: result.unmatched.length ? C.amber : C.accent, marginTop:8 }}>Actualizadas {result.matched} de {result.total}.{result.unmatched.length>0 && ` No encontré: ${result.unmatched.join(' · ')}`}</p>}
-      <div style={{ display:'flex', gap:8, marginTop:12 }}>
-        <button onClick={apply} style={{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Aplicar</button>
-        <button onClick={onClose} style={{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cerrar</button>
-      </div>
-    </div>
-  );
-}
-
-function AddPositionForm({ targets, onAdd, onCancel }) {
-  const [name, setName] = useState(''); const [platform, setPlatform] = useState(PLATFORMS[0]);
-  const [units, setUnits] = useState(''); const [avgPrice, setAvgPrice] = useState(''); const [currentPrice, setCurrentPrice] = useState(''); const [error, setError] = useState('');
-  function submit() {
-    const u = parseFloat(units), a = parseFloat(avgPrice), c = parseFloat(currentPrice);
-    if (!name.trim()) return setError('Poné o elegí un nombre para el activo');
-    if (!(u > 0)) return setError('Las unidades tienen que ser mayores a 0');
-    if (!(a > 0)) return setError('El precio de compra tiene que ser mayor a 0');
-    if (!(c > 0)) return setError('El precio actual tiene que ser mayor a 0');
-    setError(''); onAdd({ name:name.trim(), platform, units:u, avgPrice:a, currentPrice:c });
-  }
-  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
-  const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
-  return (
-    <div style={{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
-      <label style={labelStyle}>Nombre del activo
-        <input style={inputStyle} list="target-names" value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: ETF S&P 500" />
-        <datalist id="target-names">{targets.map(t=><option key={t.id} value={t.name} />)}</datalist>
-      </label>
-      <label style={{ ...labelStyle, marginTop:10, display:'block' }}>Plataforma
-        <select style={inputStyle} value={platform} onChange={e=>setPlatform(e.target.value)}>{PLATFORMS.map(p=><option key={p} value={p}>{p}</option>)}</select>
-      </label>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
-        <label style={labelStyle}>Unidades<input style={inputStyle} type="number" step="any" value={units} onChange={e=>setUnits(e.target.value)} /></label>
-        <label style={labelStyle}>Precio compra (ARS)<input style={inputStyle} type="number" step="any" value={avgPrice} onChange={e=>setAvgPrice(e.target.value)} /></label>
-      </div>
-      <label style={{ ...labelStyle, marginTop:10, display:'block' }}>Precio actual (ARS)<input style={inputStyle} type="number" step="any" value={currentPrice} onChange={e=>setCurrentPrice(e.target.value)} /></label>
-      {error && <p style={{ fontSize:12, color:C.danger, marginTop:8 }}>{error}</p>}
-      <div style={{ display:'flex', gap:8, marginTop:12 }}>
-        <button onClick={submit} style={{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Guardar</button>
-        <button onClick={onCancel} style={{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
-      </div>
-    </div>
-  );
-}
-
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
 </script>
 </body>
 </html>
