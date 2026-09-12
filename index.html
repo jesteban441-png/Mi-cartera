@@ -11,15 +11,22 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root{
-    --bg:#F4F5F1; --surface:#fff; --ink:#16201E; --ink-soft:#5B6B66; --ink-faint:#93A39D;
-    --accent:#0E6B5C; --accent-soft:#DCEDE9; --amber:#C98A2C; --danger:#B3392C; --border:rgba(22,32,30,0.14);
+    --bg:#F4F0E4; --surface:#FFFDF7; --ink:#182A20; --ink-soft:#5C6B5A; --ink-faint:#93A08E;
+    --accent:#0E6B4F; --accent-soft:#DCEADD; --amber:#B8873A; --danger:#A63F2C; --border:rgba(24,42,32,0.14);
   }
   * { box-sizing: border-box; }
-  body { margin:0; font-family:'Work Sans',-apple-system,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  body {
+    margin:0; font-family:'Work Sans',-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--ink);
+    background-color:#F4F0E4;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='40'%3E%3Cpath d='M0 20 Q17.5 5 35 20 T70 20 T105 20 T140 20' stroke='%230E6B4F' stroke-width='0.6' fill='none' opacity='0.06'/%3E%3Cpath d='M0 32 Q17.5 17 35 32 T70 32 T105 32 T140 32' stroke='%230E6B4F' stroke-width='0.5' fill='none' opacity='0.045'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+  }
   .serif { font-family:'Fraunces',Georgia,serif; }
   button { font-family:inherit; cursor:pointer; }
   input, select, textarea { font-family:inherit; }
   #root { max-width:480px; margin:0 auto; padding:1.25rem 1rem 3rem; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+  .tab-fade { animation: fadeIn 0.25s ease; }
 </style>
 </head>
 <body>
@@ -30,12 +37,13 @@ const { useState, useEffect, useMemo, useRef } = React;
 const html = htm.bind(React.createElement);
 
 const C = {
-  bg:'#F4F5F1', surface:'#FFFFFF', ink:'#16201E', inkSoft:'#5B6B66', inkFaint:'#93A39D',
-  accent:'#0E6B5C', accentSoft:'#DCEDE9', amber:'#C98A2C', danger:'#B3392C', border:'rgba(22,32,30,0.14)',
+  bg:'#F4F0E4', surface:'#FFFDF7', ink:'#182A20', inkSoft:'#5C6B5A', inkFaint:'#93A08E',
+  accent:'#0E6B4F', accentSoft:'#DCEADD', amber:'#B8873A', danger:'#A63F2C', border:'rgba(24,42,32,0.14)',
 };
-const PALETTE = ['#0E6B5C','#C98A2C','#3B6E8F','#8C7355','#7A4F8C','#B3392C','#4F7A3D','#2A5C8A','#A85C3B','#5B5B8C'];
+const PALETTE = ['#0E6B4F','#B8873A','#3B6E8F','#8C7355','#7A4F8C','#A63F2C','#4F7A3D','#2A5C8A','#A85C3B','#5B5B8C'];
 const colorFor = (i) => PALETTE[i % PALETTE.length];
 const PLATFORMS = ['IOL', 'Bullmarket', 'BingX', 'Mercado Pago', 'Otro'];
+const PLATFORM_ICONS = { IOL:'🏦', Bullmarket:'📈', BingX:'₿', 'Mercado Pago':'💳', Otro:'●' };
 
 const DEFAULT_TARGETS = [
   { id:'t1', name:'SPY', ticker:'SPY', platform:'Bullmarket', target:40 },
@@ -50,6 +58,7 @@ const DEFAULT_TARGETS = [
 ];
 
 const fmtARS = (n) => new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 }).format(n || 0);
+const fmtUSD = (n) => new Intl.NumberFormat('en-US', { style:'currency', currency:'USD', maximumFractionDigits:0 }).format(n || 0);
 const fmtPct = (n, d=1) => `${(n||0).toFixed(d)}%`;
 
 function loadLS(key, fallback) {
@@ -57,6 +66,24 @@ function loadLS(key, fallback) {
 }
 function saveLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {} }
 
+function computeRebalance(targets, actualValueByName, totalValue, aporte) {
+  const newTotal = totalValue + aporte;
+  const gaps = targets.map(t => {
+    const idealValue = newTotal * t.target / 100;
+    const currentValue = actualValueByName[t.name] || 0;
+    return { name: t.name, gap: Math.max(0, idealValue - currentValue) };
+  });
+  const totalGap = gaps.reduce((s,g) => s + g.gap, 0);
+  let result;
+  if (totalGap <= 0) {
+    result = targets.map(t => ({ name: t.name, amount: aporte * t.target / 100 }));
+  } else {
+    result = gaps.filter(g => g.gap > 0).map(g => ({ name: g.name, amount: aporte * g.gap / totalGap }));
+  }
+  return result.filter(r => r.amount > 0.5).sort((a,b) => b.amount - a.amount);
+}
+
+/* ---------- gráficos ---------- */
 function DonutChart({ data }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
@@ -70,7 +97,7 @@ function DonutChart({ data }) {
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
-  return html`<div style=${{ position:'relative', height:230 }}><canvas ref=${canvasRef}></canvas></div>`;
+  return html`<div style=${{ position:'relative', height:210 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
 function ComparisonChart({ data }) {
@@ -100,16 +127,50 @@ function ComparisonChart({ data }) {
   return html`<div style=${{ position:'relative', height }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
-function MetricCard({ label, value, tone }) {
-  const color = tone==='up' ? C.accent : tone==='down' ? C.danger : C.ink;
+function EvolutionChart({ history }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+    const sorted = [...history].sort((a,b) => a.date.localeCompare(b.date));
+    chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: sorted.map(h => h.date.slice(5)),
+        datasets: [
+          { label:'Cartera', data: sorted.map(h=>h.value), borderColor:C.accent, backgroundColor:C.accent, tension:0.3, pointRadius:2 },
+          { label:'Ahorro sin invertir', data: sorted.map(h=>h.invested), borderColor:C.amber, backgroundColor:C.amber, borderDash:[5,4], tension:0, pointRadius:2 },
+        ],
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        scales: { y:{ ticks:{ callback: v => fmtARS(v) }, grid:{ color:C.border } }, x:{ grid:{ display:false } } },
+        plugins: { legend:{ position:'top', labels:{ boxWidth:10, font:{ size:12 } } } },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [JSON.stringify(history)]);
+  return html`<div style=${{ position:'relative', height:220 }}><canvas ref=${canvasRef}></canvas></div>`;
+}
+
+function LegendList({ data }) {
   return html`
-    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:'12px 14px' }}>
-      <p style=${{ fontSize:11.5, color:C.inkSoft, margin:'0 0 4px' }}>${label}</p>
-      <p className="serif" style=${{ fontSize:18, fontWeight:500, margin:0, color }}>${value}</p>
+    <div style=${{ display:'flex', flexDirection:'column', gap:6, marginTop:10 }}>
+      ${data.map((d,i) => html`
+        <div key=${d.name} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13 }}>
+          <span style=${{ display:'flex', alignItems:'center', gap:8, color:C.ink }}>
+            <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(d.colorIndex ?? i), flexShrink:0 }}></span>
+            ${d.icon ? d.icon + ' ' : ''}${d.name}
+          </span>
+          <strong style=${{ fontWeight:500, color:C.inkSoft }}>${d.value}%</strong>
+        </div>
+      `)}
     </div>
   `;
 }
 
+/* ---------- formularios ---------- */
 function AddTargetForm({ onAdd, onCancel }) {
   const [name, setName] = useState(''); const [ticker, setTicker] = useState('');
   const [platform, setPlatform] = useState(PLATFORMS[0]); const [target, setTarget] = useState(''); const [error, setError] = useState('');
@@ -140,73 +201,57 @@ function AddTargetForm({ onAdd, onCancel }) {
   `;
 }
 
-function ObjetivoPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget, actualPctByName, hasPositions }) {
-  const [view, setView] = useState(hasPositions ? 'real' : 'objetivo');
+function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget }) {
   const [editingId, setEditingId] = useState(null);
-  const pieData = targets
-    .map((t,i) => ({ name:t.name, value: view==='objetivo' ? t.target : Math.round((actualPctByName[t.name]||0)*10)/10, colorIndex:i }))
-    .filter(d => d.value > 0);
-  const sumOff = view==='objetivo' && Math.round(targetSum*10)/10 !== 100;
-
+  const pieData = targets.map((t,i)=>({ name:t.name, value:t.target, colorIndex:i })).filter(d=>d.value>0);
+  const sumOff = Math.round(targetSum*10)/10 !== 100;
   return html`
-    <div>
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
-          <div style=${{ display:'flex', background:C.bg, borderRadius:8, padding:2 }}>
-            ${['real','objetivo'].map(v => html`
-              <button key=${v} onClick=${()=>setView(v)} style=${{
-                padding:'5px 10px', borderRadius:6, border:'none', fontSize:12, fontWeight:500,
-                background: view===v ? C.surface : 'transparent', color: view===v ? C.ink : C.inkSoft,
-              }}>${v==='real' ? 'Real' : 'Objetivo'}</button>
-            `)}
-          </div>
-          ${view==='objetivo' && html`<span style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>`}
-        </div>
-        ${(view==='real' && !hasPositions)
-          ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Todavía no cargaste posiciones — cargalas en "Mi portfolio" para ver tu reparto real acá.</p>`
-          : html`<${DonutChart} data=${pieData} />`}
-        ${sumOff && html`<p style=${{ fontSize:12, color:C.danger, margin:'4px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>`}
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Cartera objetivo</p>
+        <span style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>
       </div>
+      <${DonutChart} data=${pieData} />
+      <${LegendList} data=${pieData} />
+      ${sumOff && html`<p style=${{ fontSize:12, color:C.danger, margin:'8px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>`}
 
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Activos</p>
-          <button onClick=${() => setShowAddTarget(!showAddTarget)} style=${{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
-        </div>
-        ${showAddTarget && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
-        ${targets.map((t,i) => html`
-          <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0' }}>
-            <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
-              <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
-              <div style=${{ flex:1, minWidth:0 }}>
-                <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
-                <button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
-                  ${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
-                </button>
-              </div>
-              <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
-                style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
-              <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
-              <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
-            </div>
-            ${editingId===t.id && html`
-              <div style=${{ display:'flex', flexDirection:'column', gap:8, marginTop:8, paddingLeft:19 }}>
-                <input defaultValue=${t.name} onBlur=${e=>renameTarget(t.id, e.target.value)} placeholder="Nombre"
-                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
-                <div style=${{ display:'flex', gap:8 }}>
-                  <input value=${t.ticker} onChange=${e=>updateTargetField(t.id,'ticker',e.target.value)} placeholder="Ticker"
-                    style=${{ flex:1, padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
-                  <select value=${t.platform} onChange=${e=>updateTargetField(t.id,'platform',e.target.value)}
-                    style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }}>
-                    ${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}
-                  </select>
-                </div>
-                <p style=${{ fontSize:11, color:C.inkFaint, margin:0 }}>Si cambiás el nombre, tus posiciones ya cargadas con ese activo se renombran solas.</p>
-              </div>
-            `}
-          </div>
-        `)}
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'16px 0 12px' }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Activos</p>
+        <button onClick=${() => setShowAddTarget(!showAddTarget)} style=${{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
       </div>
+      ${showAddTarget && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
+      ${targets.map((t,i) => html`
+        <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0' }}>
+          <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
+            <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
+            <div style=${{ flex:1, minWidth:0 }}>
+              <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
+              <button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
+                ${(PLATFORM_ICONS[t.platform]||'') + ' '}${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
+              </button>
+            </div>
+            <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
+              style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
+            <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
+            <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+          </div>
+          ${editingId===t.id && html`
+            <div style=${{ display:'flex', flexDirection:'column', gap:8, marginTop:8, paddingLeft:19 }}>
+              <input defaultValue=${t.name} onBlur=${e=>renameTarget(t.id, e.target.value)} placeholder="Nombre"
+                style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+              <div style=${{ display:'flex', gap:8 }}>
+                <input value=${t.ticker} onChange=${e=>updateTargetField(t.id,'ticker',e.target.value)} placeholder="Ticker"
+                  style=${{ flex:1, padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                <select value=${t.platform} onChange=${e=>updateTargetField(t.id,'platform',e.target.value)}
+                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }}>
+                  ${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}
+                </select>
+              </div>
+              <p style=${{ fontSize:11, color:C.inkFaint, margin:0 }}>Si cambiás el nombre, tus posiciones ya cargadas con ese activo se renombran solas.</p>
+            </div>
+          `}
+        </div>
+      `)}
     </div>
   `;
 }
@@ -218,7 +263,7 @@ function BulkUpdateForm({ onApply, onClose }) {
   return html`
     <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
       <p style=${{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por activo: nombre, dos puntos, precio (punto para decimales).</p>
-      <textarea style=${inputStyle} value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'ETF S&P 500: 550.23\nBitcoin: 61234000'}></textarea>
+      <textarea style=${inputStyle} value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'SPY: 20400\nBitcoin: 61234000'}></textarea>
       ${result && html`<p style=${{ fontSize:12, color: result.unmatched.length ? C.amber : C.accent, marginTop:8 }}>Actualizadas ${result.matched} de ${result.total}.${result.unmatched.length>0 ? ` No encontré: ${result.unmatched.join(' · ')}` : ''}</p>`}
       <div style=${{ display:'flex', gap:8, marginTop:12 }}>
         <button onClick=${apply} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Aplicar</button>
@@ -244,7 +289,7 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
   return html`
     <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
       <label style=${labelStyle}>Nombre del activo
-        <input style=${inputStyle} list="target-names" value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: ETF S&P 500" />
+        <input style=${inputStyle} list="target-names" value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: SPY" />
         <datalist id="target-names">${targets.map(t=>html`<option key=${t.id} value=${t.name} />`)}</datalist>
       </label>
       <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Plataforma
@@ -264,39 +309,142 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
   `;
 }
 
-function PortfolioPanel({ withDerived, totalValue, totalInvested, totalPL, totalPLPct, comparisonData, platformTotals, targets, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice, showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading }) {
+function AportesLog({ aportes, addAporte, removeAporte }) {
+  const [monto, setMonto] = useState('');
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
+  const total = aportes.reduce((s,a) => s + a.monto, 0);
+  function submit() {
+    const m = parseFloat(monto);
+    if (!(m > 0)) return;
+    addAporte({ fecha, monto:m });
+    setMonto('');
+  }
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Registro de aportes</p>
+      <div style=${{ display:'flex', gap:8, marginBottom:12 }}>
+        <input type="date" value=${fecha} onChange=${e=>setFecha(e.target.value)}
+          style=${{ padding:'8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+        <input type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} placeholder="Monto (ARS)"
+          style=${{ flex:1, padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, minWidth:0 }} />
+        <button onClick=${submit} style=${{ padding:'8px 14px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>+</button>
+      </div>
+      ${aportes.length === 0
+        ? html`<p style=${{ fontSize:13, color:C.inkSoft }}>Todavía no registraste aportes.</p>`
+        : html`
+          <div>
+            ${aportes.slice().reverse().map(a => html`
+              <div key=${a.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 0', borderTop:`0.5px solid ${C.border}` }}>
+                <span style=${{ fontSize:13, color:C.inkSoft }}>${a.fecha}</span>
+                <span style=${{ fontSize:13.5, fontWeight:500 }}>${fmtARS(a.monto)}</span>
+                <button onClick=${()=>removeAporte(a.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:4 }}>✕</button>
+              </div>
+            `)}
+            <div style=${{ display:'flex', justifyContent:'space-between', paddingTop:10, marginTop:4, borderTop:`1px solid ${C.border}` }}>
+              <strong style=${{ fontSize:13 }}>Total aportado</strong>
+              <strong style=${{ fontSize:13 }}>${fmtARS(total)}</strong>
+            </div>
+          </div>
+        `}
+    </div>
+  `;
+}
+
+/* ---------- pestañas ---------- */
+function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, onExport, onImportClick }) {
+  const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
+  const accentColor = (dayChange != null && dayChange < 0) ? '#6B8F7C' : C.accent;
   return html`
     <div>
-      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
-        <${MetricCard} label="Valor total" value=${fmtARS(totalValue)} />
-        <${MetricCard} label="Invertido" value=${fmtARS(totalInvested)} />
-        <${MetricCard} label="Ganancia / pérdida" value=${fmtARS(totalPL)} tone=${totalPL>=0?'up':'down'} />
-        <${MetricCard} label="Variación" value=${fmtPct(totalPLPct)} tone=${totalPL>=0?'up':'down'} />
+      <div style=${{ position:'relative', overflow:'hidden', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:14, padding:'1.5rem 1.25rem', marginBottom:16 }}>
+        <span style=${{ position:'absolute', right:-14, top:-38, fontSize:170, fontFamily:"'Fraunces',serif", color:accentColor, opacity:0.07, pointerEvents:'none', userSelect:'none' }}>$</span>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', position:'relative' }}>
+          <div>
+            <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'0 0 4px' }}>Valor total</p>
+            <p className="serif" style=${{ fontSize:32, fontWeight:500, margin:0, color:accentColor }}>${fmt(totalValue)}</p>
+            <p style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmt(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
+          </div>
+          <div style=${{ display:'flex', gap:6 }}>
+            <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surface, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
+            <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surface, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
+          </div>
+        </div>
+        <div style=${{ display:'flex', alignItems:'center', gap:8, marginTop:14, position:'relative' }}>
+          <button onClick=${()=>setShowUSD(false)} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: !showUSD?C.accentSoft:'transparent', color: !showUSD?C.accent:C.inkSoft }}>ARS</button>
+          <button onClick=${()=>setShowUSD(true)} disabled=${!usdArs} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: showUSD?C.accentSoft:'transparent', color: showUSD?C.accent:C.inkSoft }}>USD</button>
+          ${lastUpdated && html`<span style=${{ fontSize:11, color:C.inkFaint, marginLeft:'auto' }}>Actualizado ${lastUpdated}</span>`}
+        </div>
       </div>
 
-      ${platformTotals.length > 0 && html`
-        <div style=${{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:16 }}>
-          ${platformTotals.map(([plat,val]) => html`
-            <span key=${plat} style=${{ fontSize:12, color:C.inkSoft, background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:7, padding:'5px 10px' }}>
-              ${plat}: <strong style=${{ color:C.ink, fontWeight:500 }}>${fmtARS(val)}</strong>
-            </span>
-          `)}
-        </div>
-      `}
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
+        ${assetPieData.length === 0
+          ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión para verlo acá.</p>`
+          : html`<${DonutChart} data=${assetPieData} /><${LegendList} data=${assetPieData} />`}
+      </div>
+
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
+        ${platformPieData.length === 0
+          ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión para verlo acá.</p>`
+          : html`<${DonutChart} data=${platformPieData} /><${LegendList} data=${platformPieData} />`}
+      </div>
+
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Cartera vs. ahorro sin invertir</p>
+        ${history.length < 2
+          ? html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Se va armando solo, un punto por día que abrís la app. En un par de semanas ya se ve la curva.</p>`
+          : html`<${EvolutionChart} history=${history} />`}
+      </div>
+    </div>
+  `;
+}
+
+function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
+  comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice,
+  showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
+  aportes, addAporte, removeAporte, totalValue, actualValueByName }) {
+
+  const [aporteMonto, setAporteMonto] = useState('');
+  const sugerencias = useMemo(() => {
+    const monto = parseFloat(aporteMonto);
+    if (!(monto > 0)) return null;
+    return computeRebalance(targets, actualValueByName, totalValue, monto);
+  }, [aporteMonto, targets, actualValueByName, totalValue]);
+
+  return html`
+    <div>
+      <${TargetsEditor} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
+        addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget} />
 
       ${withDerived.length > 0 && html`
-        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Actual vs. objetivo</p>
           <${ComparisonChart} data=${comparisonData} />
         </div>
       `}
 
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Próximo aporte — sugerencia</p>
+        <input type="number" step="any" value=${aporteMonto} onChange=${e=>setAporteMonto(e.target.value)} placeholder="Monto a invertir (ARS)"
+          style=${{ width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5 }} />
+        ${sugerencias && html`
+          <div style=${{ marginTop:10, display:'flex', flexDirection:'column', gap:6 }}>
+            ${sugerencias.map(s => html`
+              <div key=${s.name} style=${{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+                <span>${s.name}</span><strong style=${{ fontWeight:500 }}>${fmtARS(s.amount)}</strong>
+              </div>
+            `)}
+          </div>
+        `}
+      </div>
+
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
         <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Posiciones</p>
           <div style=${{ display:'flex', gap:8 }}>
             ${withDerived.length > 0 && html`
-              <button onClick=${fetchLivePrices} disabled=${liveLoading} style=${{ border:`1px solid ${C.accent}`, background: 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>
+              <button onClick=${fetchLivePrices} disabled=${liveLoading} style=${{ border:`1px solid ${C.accent}`, background:'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>
                 ${liveLoading ? 'Buscando...' : '↻ Precios en vivo'}
               </button>
             `}
@@ -304,7 +452,6 @@ function PortfolioPanel({ withDerived, totalValue, totalInvested, totalPL, total
           </div>
         </div>
         ${liveStatus && html`<p style=${{ fontSize:12, color:C.inkSoft, marginBottom:10, lineHeight:1.5 }}>${liveStatus}</p>`}
-
         ${withDerived.length > 0 && html`
           <button onClick=${() => setShowBulkUpdate(!showBulkUpdate)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:12, padding:0, marginBottom:12, textDecoration:'underline' }}>
             ${showBulkUpdate ? 'ocultar' : 'o pegar precios a mano'}
@@ -312,17 +459,16 @@ function PortfolioPanel({ withDerived, totalValue, totalInvested, totalPL, total
         `}
         ${showBulkUpdate && html`<${BulkUpdateForm} onApply=${bulkUpdatePrices} onClose=${() => setShowBulkUpdate(false)} />`}
         ${showAddPosition && html`<${AddPositionForm} targets=${targets} onAdd=${addPosition} onCancel=${() => setShowAddPosition(false)} />`}
-
         ${withDerived.length === 0 && !showAddPosition && html`
-          <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Todavía no cargaste ninguna posición. Agregá la primera para comparar contra tu cartera objetivo.</p>
+          <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Todavía no cargaste ninguna posición.</p>
         `}
-
         ${withDerived.map(p => html`
-          <div key=${p.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'12px 0' }}>
+          <div key=${p.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'12px 10px', margin:'0 -10px', borderRadius:8,
+            background: p.pl>=0 ? 'rgba(14,107,79,0.06)' : 'rgba(166,63,44,0.06)' }}>
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
               <div>
                 <p style=${{ fontSize:14, fontWeight:500, margin:0 }}>${p.name}</p>
-                <span style=${{ fontSize:11, color:C.inkSoft, background:C.bg, padding:'2px 7px', borderRadius:5, display:'inline-block', marginTop:4 }}>${p.platform}</span>
+                <span style=${{ fontSize:11, color:C.inkSoft, background:C.bg, padding:'2px 7px', borderRadius:5, display:'inline-block', marginTop:4 }}>${(PLATFORM_ICONS[p.platform]||'') + ' ' + p.platform}</span>
               </div>
               <button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
             </div>
@@ -341,22 +487,32 @@ function PortfolioPanel({ withDerived, totalValue, totalInvested, totalPL, total
           </div>
         `)}
       </div>
+
+      <${AportesLog} aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte} />
     </div>
   `;
 }
 
+/* ---------- app ---------- */
 function App() {
-  const [tab, setTab] = useState('objetivo');
+  const [tab, setTab] = useState('inicio');
   const [targets, setTargets] = useState(() => loadLS('cartera-objetivo', DEFAULT_TARGETS));
   const [positions, setPositions] = useState(() => loadLS('portfolio-posiciones', []));
+  const [aportes, setAportes] = useState(() => loadLS('registro-aportes', []));
+  const [history, setHistory] = useState(() => loadLS('historial-valor', []));
   const [showAddTarget, setShowAddTarget] = useState(false);
   const [showAddPosition, setShowAddPosition] = useState(false);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [liveStatus, setLiveStatus] = useState('');
   const [liveLoading, setLiveLoading] = useState(false);
+  const [usdArs, setUsdArs] = useState(null);
+  const [showUSD, setShowUSD] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => { saveLS('cartera-objetivo', targets); }, [targets]);
   useEffect(() => { saveLS('portfolio-posiciones', positions); }, [positions]);
+  useEffect(() => { saveLS('registro-aportes', aportes); }, [aportes]);
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
@@ -375,6 +531,9 @@ function App() {
   function addPosition(p) { setPositions([...positions, { ...p, id:'p'+Date.now() }]); setShowAddPosition(false); }
   function removePosition(id) { setPositions(positions.filter(p => p.id !== id)); }
   function updateCurrentPrice(id, val) { setPositions(positions.map(p => p.id === id ? { ...p, currentPrice: val } : p)); }
+
+  function addAporte(a) { setAportes([...aportes, { ...a, id:'a'+Date.now() }]); }
+  function removeAporte(id) { setAportes(aportes.filter(a => a.id !== id)); }
 
   function bulkUpdatePrices(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -401,14 +560,13 @@ function App() {
       const data = await r.json();
       if (!data.ok) { setLiveStatus('Error del servidor: ' + data.error); setLiveLoading(false); return; }
       let updated = 0;
-      setPositions(prev => {
-        const next = prev.map(p => {
-          const price = data.prices[p.name];
-          if (price) { updated++; return { ...p, currentPrice: price }; }
-          return p;
-        });
-        return next;
-      });
+      setPositions(prev => prev.map(p => {
+        const price = data.prices[p.name];
+        if (price) { updated++; return { ...p, currentPrice: price }; }
+        return p;
+      }));
+      if (data.usdArs) setUsdArs(data.usdArs);
+      if (data.updatedAt) setLastUpdated(new Date(data.updatedAt).toLocaleString('es-AR', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }));
       let msg = `Actualizadas ${updated} posiciones.`;
       if (data.notFound && data.notFound.length) msg += ` Sin precio para: ${data.notFound.join(', ')}.`;
       setLiveStatus(msg);
@@ -420,8 +578,7 @@ function App() {
 
   useEffect(() => {
     if (positions.length > 0) fetchLivePrices();
-    // se ejecuta una sola vez al abrir la app
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   const withDerived = positions.map(p => {
@@ -434,60 +591,123 @@ function App() {
   const totalPL = totalValue - totalInvested;
   const totalPLPct = totalInvested ? totalPL / totalInvested * 100 : 0;
 
+  useEffect(() => {
+    if (positions.length === 0) return;
+    const today = new Date().toISOString().slice(0,10);
+    setHistory(prev => {
+      const idx = prev.findIndex(h => h.date === today);
+      const entry = { date: today, value: Math.round(totalValue), invested: Math.round(totalInvested) };
+      let next;
+      if (idx >= 0) { next = [...prev]; next[idx] = entry; }
+      else next = [...prev, entry];
+      saveLS('historial-valor', next);
+      return next;
+    });
+    // eslint-disable-next-line
+  }, [totalValue, totalInvested]);
+
+  const dayChange = useMemo(() => {
+    if (history.length < 2) return null;
+    const sorted = [...history].sort((a,b) => a.date.localeCompare(b.date));
+    return sorted[sorted.length-1].value - sorted[sorted.length-2].value;
+  }, [history]);
+
+  const actualValueByName = useMemo(() => {
+    const map = {};
+    targets.forEach(t => { map[t.name] = withDerived.filter(p => p.name === t.name).reduce((s,p) => s + p.value, 0); });
+    return map;
+  }, [targets, withDerived]);
+
   const comparisonData = useMemo(() => {
     const rows = targets.map(t => {
-      const val = withDerived.filter(p => p.name === t.name).reduce((s,p) => s + p.value, 0);
-      return { name: t.name, Objetivo: t.target, Actual: totalValue ? Math.round(val/totalValue*1000)/10 : 0 };
+      const val = actualValueByName[t.name] || 0;
+      return { name: t.name, Objetivo: t.target, Actual: totalValue ? Math.round(val/totalValue*1000)/10 : 0, _val: val };
     });
     const matchedNames = new Set(targets.map(t => t.name));
     const otrosVal = withDerived.filter(p => !matchedNames.has(p.name)).reduce((s,p) => s + p.value, 0);
-    if (otrosVal > 0) rows.push({ name:'Otros', Objetivo:0, Actual: totalValue ? Math.round(otrosVal/totalValue*1000)/10 : 0 });
-    return rows;
-  }, [targets, withDerived, totalValue]);
+    if (otrosVal > 0) rows.push({ name:'Otros', Objetivo:0, Actual: totalValue ? Math.round(otrosVal/totalValue*1000)/10 : 0, _val:otrosVal });
+    return rows.sort((a,b) => b._val - a._val);
+  }, [targets, withDerived, totalValue, actualValueByName]);
 
-  const actualPctByName = useMemo(() => {
-    const map = {};
-    targets.forEach(t => {
-      const val = withDerived.filter(p => p.name === t.name).reduce((s,p) => s + p.value, 0);
-      map[t.name] = totalValue ? val/totalValue*100 : 0;
-    });
-    return map;
-  }, [targets, withDerived, totalValue]);
+  const assetPieData = useMemo(() => {
+    return targets.map((t,i) => ({ name:t.name, value: Math.round((actualValueByName[t.name]||0) / (totalValue||1) * 1000) / 10, colorIndex:i }))
+      .filter(d => d.value > 0)
+      .sort((a,b) => b.value - a.value);
+  }, [targets, actualValueByName, totalValue]);
 
-  const platformTotals = useMemo(() => {
+  const platformPieData = useMemo(() => {
     const map = {};
     withDerived.forEach(p => { map[p.platform] = (map[p.platform]||0) + p.value; });
-    return Object.entries(map).filter(([,v]) => v > 0);
-  }, [withDerived]);
+    return Object.entries(map).filter(([,v]) => v > 0).map(([plat,val],i) => ({
+      name: plat, value: Math.round(val/(totalValue||1)*1000)/10, colorIndex: i, icon: PLATFORM_ICONS[plat] || '',
+    })).sort((a,b) => b.value - a.value);
+  }, [withDerived, totalValue]);
+
+  function exportBackup() {
+    const payload = { targets, positions, aportes, history, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `mi-cartera-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!window.confirm('Esto va a reemplazar tus datos actuales por los del backup. ¿Confirmás?')) return;
+        if (Array.isArray(data.targets)) setTargets(data.targets);
+        if (Array.isArray(data.positions)) setPositions(data.positions);
+        if (Array.isArray(data.aportes)) setAportes(data.aportes);
+        if (Array.isArray(data.history)) setHistory(data.history);
+      } catch (err) {
+        alert('El archivo no es un backup válido.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
 
   return html`
     <div>
       <h1 className="serif" style=${{ fontSize:22, fontWeight:500, margin:'0 0 2px' }}>Mi cartera en pesos</h1>
-      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Tu estrategia real, con precios que se actualizan solos al abrir.</p>
+      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Todo a la vista apenas entrás.</p>
 
       <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20 }}>
-        ${[['objetivo','Cartera objetivo'],['portfolio','Mi portfolio']].map(([k,label]) => html`
+        ${[['inicio','Inicio'],['gestion','Gestión']].map(([k,label]) => html`
           <button key=${k} onClick=${() => setTab(k)} style=${{
-            flex:1, padding:'9px 4px', borderRadius:7, border:'none',
-            fontSize:13, fontWeight:500,
-            background: tab===k ? C.accent : 'transparent',
-            color: tab===k ? '#fff' : C.inkSoft,
+            flex:1, padding:'9px 4px', borderRadius:7, border:'none', fontSize:13, fontWeight:500,
+            background: tab===k ? C.accent : 'transparent', color: tab===k ? '#fff' : C.inkSoft,
           }}>${label}</button>
         `)}
       </div>
 
-      ${tab === 'objetivo' && html`<${ObjetivoPanel} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
-          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
-          actualPctByName=${actualPctByName} hasPositions=${withDerived.length>0} />`}
+      <input ref=${fileInputRef} type="file" accept="application/json" style=${{ display:'none' }} onChange=${handleImportFile} />
 
-      ${tab === 'portfolio' && html`<${PortfolioPanel}
-          withDerived=${withDerived} totalValue=${totalValue} totalInvested=${totalInvested} totalPL=${totalPL} totalPLPct=${totalPLPct}
-          comparisonData=${comparisonData} platformTotals=${platformTotals} targets=${targets}
+      <div key=${tab} className="tab-fade">
+        ${tab === 'inicio' && html`<${HomePanel}
+          totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
+          assetPieData=${assetPieData} platformPieData=${platformPieData} history=${history} lastUpdated=${lastUpdated}
+          usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
+          onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
+        />`}
+
+        ${tab === 'gestion' && html`<${GestionPanel}
+          targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
+          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
+          comparisonData=${comparisonData} withDerived=${withDerived}
           showAddPosition=${showAddPosition} setShowAddPosition=${setShowAddPosition}
           addPosition=${addPosition} removePosition=${removePosition} updateCurrentPrice=${updateCurrentPrice}
           showBulkUpdate=${showBulkUpdate} setShowBulkUpdate=${setShowBulkUpdate} bulkUpdatePrices=${bulkUpdatePrices}
           fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
+          aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
+          totalValue=${totalValue} actualValueByName=${actualValueByName}
         />`}
+      </div>
 
       <p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:28, lineHeight:1.6 }}>
         Herramienta personal y educativa, no es asesoramiento financiero. Los precios en vivo vienen de fuentes públicas
