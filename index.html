@@ -725,6 +725,113 @@ function useCountUp(value, duration = 700) {
   return display;
 }
 
+function ResumenSemanal({ history, movimientos, withDerived }) {
+  const resumen = useMemo(() => {
+    if (!history || history.length < 2) return null;
+    const sorted = [...history].sort((a,b) => a.date.localeCompare(b.date));
+    const hoy = new Date();
+    const hace7 = new Date(hoy); hace7.setDate(hace7.getDate() - 7);
+    const hace7Str = hace7.toISOString().slice(0,10);
+    let base = [...sorted].reverse().find(h => h.date <= hace7Str);
+    if (!base) base = sorted[0];
+    const spanDias = Math.round((hoy - new Date(base.date + 'T00:00:00')) / 86400000);
+    if (spanDias < 4) return null;
+
+    const ultimo = sorted[sorted.length - 1];
+    const cambioPct = base.value ? Math.round((ultimo.value - base.value) / base.value * 1000) / 10 : 0;
+
+    const hoyStr = hoy.toISOString().slice(0,10);
+    const hace14 = new Date(hoy); hace14.setDate(hace14.getDate() - 14);
+    const hace14Str = hace14.toISOString().slice(0,10);
+    const estaSemana = movimientos.filter(m => m.tipo === 'gasto' && m.fecha > hace7Str && m.fecha <= hoyStr).reduce((s,m) => s + m.monto, 0);
+    const semanaPasada = movimientos.filter(m => m.tipo === 'gasto' && m.fecha > hace14Str && m.fecha <= hace7Str).reduce((s,m) => s + m.monto, 0);
+    const cambioGastoPct = semanaPasada ? Math.round((estaSemana - semanaPasada) / semanaPasada * 1000) / 10 : null;
+
+    let mejorNombre = null, mejorPct = -Infinity;
+    const preciosBase = base.precios || {};
+    const preciosHoy = ultimo.precios || {};
+    Object.keys(preciosHoy).forEach(nname => {
+      const pBase = preciosBase[nname], pHoy = preciosHoy[nname];
+      if (typeof pBase === 'number' && pBase > 0 && typeof pHoy === 'number') {
+        const pct = (pHoy - pBase) / pBase * 100;
+        if (pct > mejorPct) { mejorPct = pct; mejorNombre = nname; }
+      }
+    });
+    const posMatch = mejorNombre ? (withDerived || []).find(p => norm(p.name) === mejorNombre) : null;
+
+    return { cambioPct, estaSemana, cambioGastoPct, mejorNombre: posMatch ? posMatch.name : mejorNombre, mejorPct: mejorNombre ? Math.round(mejorPct*10)/10 : null };
+  }, [history, movimientos, withDerived]);
+
+  if (!resumen) return null;
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.1rem 1.25rem', marginBottom:16 }}>
+      <p style=${{ fontSize:12, color:C.inkFaint, textTransform:'uppercase', letterSpacing:'0.05em', margin:'0 0 6px' }}>Esta semana</p>
+      <p style=${{ fontSize:13.5, color:C.ink, margin:0, lineHeight:1.6 }}>
+        Tu cartera ${resumen.cambioPct >= 0 ? 'subió' : 'bajó'}
+        <strong className="mono" style=${{ color: resumen.cambioPct>=0 ? C.accent : C.danger }}> ${resumen.cambioPct>=0?'+':''}${resumen.cambioPct}%</strong>.
+        ${resumen.estaSemana > 0 ? html` Gastaste <strong className="mono">${fmtARS(resumen.estaSemana)}</strong>${resumen.cambioGastoPct != null ? html` (${resumen.cambioGastoPct>=0?'+':''}${resumen.cambioGastoPct}% vs. la semana pasada)` : ''}.` : ''}
+        ${resumen.mejorNombre ? html` Tu mejor activo fue <strong>${resumen.mejorNombre}</strong> (${resumen.mejorPct>=0?'+':''}${resumen.mejorPct}%).` : ''}
+      </p>
+    </div>
+  `;
+}
+
+function computeHealthScore(comparisonData, history) {
+  const actualPcts = (comparisonData || []).map(d => d.Actual || 0);
+  const totalPct = actualPcts.reduce((s,v) => s+v, 0);
+  const hhi = totalPct > 0 ? actualPcts.reduce((s,v) => s + Math.pow(v/totalPct, 2), 0) : 1;
+  const factor1 = Math.round((1 - hhi) * 40);
+
+  const desvios = (comparisonData || []).map(d => Math.abs((d.Actual||0) - (d.Objetivo||0)));
+  const avgDesv = desvios.length ? desvios.reduce((s,v) => s+v, 0) / desvios.length : 0;
+  const factor2 = Math.round(Math.max(0, 30 * (1 - avgDesv/30)));
+
+  let factor3 = 15, volSuficiente = false;
+  if (history && history.length >= 8) {
+    const sorted = [...history].sort((a,b) => a.date.localeCompare(b.date));
+    const retornos = [];
+    for (let i=1; i<sorted.length; i++) { if (sorted[i-1].value > 0) retornos.push((sorted[i].value - sorted[i-1].value)/sorted[i-1].value*100); }
+    if (retornos.length >= 5) {
+      const media = retornos.reduce((s,v)=>s+v,0)/retornos.length;
+      const varianza = retornos.reduce((s,v)=>s+Math.pow(v-media,2),0)/retornos.length;
+      factor3 = Math.round(Math.max(0, 30 - Math.sqrt(varianza)*6));
+      volSuficiente = true;
+    }
+  }
+  const total = Math.max(0, Math.min(100, factor1 + factor2 + factor3));
+  return { total, factor1, factor2, factor3, volSuficiente };
+}
+
+function HealthScoreCard({ comparisonData, history }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const { total, factor1, factor2, factor3, volSuficiente } = useMemo(() => computeHealthScore(comparisonData, history), [comparisonData, history]);
+  if (!comparisonData || comparisonData.length === 0) return null;
+  const label = total>=80?'Sólida': total>=60?'Bien encaminada': total>=40?'Para revisar':'Desbalanceada';
+  const color = total>=60?C.accent: total>=40?C.btc:C.danger;
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Puntaje de salud</p>
+        <button onClick=${()=>setShowDetail(!showDetail)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:11, textDecoration:'underline', padding:0 }}>${showDetail ? 'ocultar' : '¿cómo se calcula?'}</button>
+      </div>
+      <div style=${{ display:'flex', alignItems:'baseline', gap:10, marginTop:6 }}>
+        <p className="serif" style=${{ fontSize:32, fontWeight:500, margin:0, color }}>${total}</p>
+        <span style=${{ fontSize:13, color:C.inkSoft }}>/100 · ${label}</span>
+      </div>
+      ${showDetail && html`
+        <div style=${{ marginTop:12, display:'flex', flexDirection:'column', gap:6, fontSize:12, color:C.inkSoft }}>
+          <div style=${{ display:'flex', justifyContent:'space-between' }}><span>Diversificación</span><span className="mono">${factor1}/40</span></div>
+          <div style=${{ display:'flex', justifyContent:'space-between' }}><span>Cerca del objetivo</span><span className="mono">${factor2}/30</span></div>
+          <div style=${{ display:'flex', justifyContent:'space-between' }}><span>Estabilidad reciente${volSuficiente ? '' : ' (poco historial todavía)'}</span><span className="mono">${factor3}/30</span></div>
+          <p style=${{ fontSize:11, color:C.inkFaint, marginTop:6, lineHeight:1.5 }}>
+            Es un indicador simple armado con lo que ya tenés cargado, no una medida financiera formal de riesgo. "Estabilidad reciente" se vuelve más precisa con más historial.
+          </p>
+        </div>
+      `}
+    </div>
+  `;
+}
+
 function ThrowbackCard({ history, totalValue, fmtMasked }) {
   const punto = useMemo(() => {
     if (!history || history.length < 2) return null;
@@ -756,7 +863,7 @@ function ThrowbackCard({ history, totalValue, fmtMasked }) {
   `;
 }
 
-function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, withDerived, history, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, modoPresentacion, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
+function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, withDerived, history, movimientos, comparisonData, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, modoPresentacion, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
   const fmtMasked = (n) => hideAmounts ? '•••••••' : fmt(n);
   const accentColor = (dayChange != null && dayChange < 0) ? '#5B9E82' : C.accent;
@@ -818,6 +925,8 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
           </div>
         </div>
 
+        <${ResumenSemanal} history=${history} movimientos=${movimientos||[]} withDerived=${withDerived} />
+
         <${ThrowbackCard} history=${history} totalValue=${totalValue} fmtMasked=${fmtMasked} />
 
         <div className="donut-row" style=${{ marginBottom:16 }}>
@@ -851,6 +960,8 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
               : html`<${DonutChart} data=${platformPieData} height=${260} /><${LegendList} data=${platformLegendData} />`}
           </div>
         </div>
+
+        <${HealthScoreCard} comparisonData=${comparisonData||[]} history=${history} />
 
         <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
           <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
@@ -1594,6 +1705,7 @@ function App({ user }) {
         ${loaded && tab === 'inicio' && html`<${HomePanel}
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
           assetPieData=${assetPieData} platformPieData=${platformPieData} withDerived=${withDerived} history=${history} lastUpdated=${lastUpdated}
+          movimientos=${movimientos} comparisonData=${comparisonData}
           usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
           hideAmounts=${hideAmounts} setHideAmounts=${setHideAmounts} modoPresentacion=${modoPresentacion}
           inflacionMensual=${inflacionMensual} inflacionAnualizada=${inflacionAnualizada}
