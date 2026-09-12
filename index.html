@@ -1,3 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cartera de inversiones</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0A1512; --surface:#101E19; --surface-alt:#152922; --ink:#EAF3EE; --ink-soft:#8FA79B; --ink-faint:#5C7268;
+    --accent:#1FD693; --accent-soft:rgba(31,214,147,0.14); --btc:#F7A93B; --ar:#63B4E0; --danger:#FF6B5B;
+    --border:rgba(234,243,238,0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; font-family:'Work Sans',-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--ink);
+    background-color:#0A1512;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='170'%3E%3Ctext x='6' y='46' font-family='Georgia,serif' font-size='36' fill='%231FD693' opacity='0.05'%3E%24%3C/text%3E%3Ctext x='130' y='96' font-family='Georgia,serif' font-size='30' fill='%23F7A93B' opacity='0.05'%3E%E2%82%BF%3C/text%3E%3Ctext x='40' y='146' font-family='Georgia,serif' font-size='20' fill='%2363B4E0' opacity='0.05'%3EAR%24%3C/text%3E%3C/svg%3E");
+    background-repeat: repeat;
+  }
+  .serif { font-family:'Fraunces',Georgia,serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  button { font-family:inherit; cursor:pointer; }
+  input, select, textarea { font-family:inherit; background:#152922; color:#EAF3EE; }
+  input::placeholder, textarea::placeholder { color:#5C7268; }
+  #root { max-width:1100px; margin:0 auto; padding:1.5rem 1.5rem 3rem; }
+  @media (max-width: 700px) { #root { padding:1.25rem 1rem 3rem; } }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+  .tab-fade { animation: fadeIn 0.25s ease; }
+  .home-grid { display:grid; grid-template-columns: 1fr; gap:16px; align-items:start; }
+  @media (min-width: 900px) { .home-grid { grid-template-columns: 2.1fr 1fr; } }
+  .donut-row { display:flex; flex-direction:column; gap:16px; }
+  @media (min-width: 620px) { .donut-row { flex-direction:row; } .donut-row > div { flex:1; min-width:0; } }
+  .gestion-wrap { max-width:680px; margin:0 auto; }
+</style>
+</head>
+<body>
+<div id="root">Cargando…</div>
+<script type="module">
+import htm from 'https://unpkg.com/htm@3.1.1?module';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+const { useState, useEffect, useMemo, useRef } = React;
+const html = htm.bind(React.createElement);
+
+// PASO 1: reemplazá este objeto por el que te dio Firebase (Configuración del proyecto → Tus apps → </>).
+// No son datos secretos, está bien que vivan acá.
+const firebaseConfig = {
+  apiKey: "AIzaSyCZja22mYBYfdLIaVnXD3tTpAAuBkESG-Q",
+  authDomain: "portfoliovoda.firebaseapp.com",
+  projectId: "portfoliovoda",
+  storageBucket: "portfoliovoda.firebasestorage.app",
+  messagingSenderId: "842057998069",
+  appId: "1:842057998069:web:e960e7549d18da90762fbc",
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
+
+const C = {
+  bg:'#0A1512', surface:'#101E19', surfaceAlt:'#152922', ink:'#EAF3EE', inkSoft:'#8FA79B', inkFaint:'#5C7268',
+  accent:'#1FD693', accentSoft:'rgba(31,214,147,0.14)', btc:'#F7A93B', ar:'#63B4E0', danger:'#FF6B5B',
+  border:'rgba(234,243,238,0.10)',
+};
+const PALETTE = ['#1FD693','#F7A93B','#63B4E0','#B98CE0','#E0748C','#6FE0C0','#E0C158','#7C93E0','#E08F5B','#8FA79B'];
 const colorFor = (i) => PALETTE[i % PALETTE.length];
 const PLATFORMS = ['IOL', 'Bullmarket', 'BingX', 'Mercado Pago', 'Otro'];
 const PLATFORM_BADGES = {
