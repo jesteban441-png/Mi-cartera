@@ -216,12 +216,15 @@ function ProjectionLine({ points }) {
       type: 'line',
       data: {
         labels: points.map(p => `Año ${p.year}`),
-        datasets: [{ label:'Proyección', data: points.map(p=>p.value), borderColor:C.accent, backgroundColor:'rgba(31,214,147,0.12)', fill:true, tension:0.35, pointRadius:0 }],
+        datasets: [
+          { label:'Proyección', data: points.map(p=>p.value), borderColor:C.accent, backgroundColor:'rgba(31,214,147,0.12)', fill:true, tension:0.35, pointRadius:0 },
+          { label:'Solo ahorrando', data: points.map(p=>p.ahorro), borderColor:'rgba(234,243,238,0.35)', backgroundColor:'transparent', borderDash:[4,4], fill:false, tension:0, pointRadius:0, borderWidth:1.5 },
+        ],
       },
       options: {
         responsive:true, maintainAspectRatio:false,
         scales: { y:{ ticks:{ color:C.inkSoft, callback: v => fmtARS(v) }, grid:{ color:C.border } }, x:{ ticks:{ color:C.inkSoft }, grid:{ display:false } } },
-        plugins: { legend:{ display:false } },
+        plugins: { legend:{ display:true, position:'top', labels:{ color:C.inkFaint, boxWidth:10, font:{ size:11 } } } },
       },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
@@ -461,9 +464,11 @@ function ProjectionCard({ startValue, defaultRate }) {
     const rMensual = Math.pow(1 + tasaAnual/100, 1/12) - 1;
     const pts = [];
     let v = startValue;
+    let ahorro = startValue;
     for (let m = 0; m <= anios*12; m++) {
-      if (m % 12 === 0) pts.push({ year: m/12, value: Math.round(v) });
+      if (m % 12 === 0) pts.push({ year: m/12, value: Math.round(v), ahorro: Math.round(ahorro) });
       v = v*(1+rMensual) + (aporte || 0);
+      ahorro = ahorro + (aporte || 0);
     }
     return pts;
   }, [startValue, aporte, tasaAnual, plazo]);
@@ -647,6 +652,207 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
   `;
 }
 
+function monthKeyOf(fecha) { return (fecha || '').slice(0,7); }
+
+function AddMovimientoForm({ categorias, onAdd, onCancel }) {
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
+  const [tipo, setTipo] = useState('gasto');
+  const [categoria, setCategoria] = useState('');
+  const [monto, setMonto] = useState('');
+  const [error, setError] = useState('');
+  function submit() {
+    const m = parseFloat(monto);
+    if (!categoria.trim()) return setError('Poné una categoría');
+    if (!(m > 0)) return setError('El monto tiene que ser mayor a 0');
+    setError('');
+    onAdd({ fecha, tipo, categoria: categoria.trim(), monto: m });
+    setCategoria(''); setMonto('');
+  }
+  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
+  const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
+  return html`
+    <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+        <label style=${labelStyle}>Fecha<input type="date" style=${inputStyle} value=${fecha} onChange=${e=>setFecha(e.target.value)} /></label>
+        <label style=${labelStyle}>Tipo
+          <select style=${inputStyle} value=${tipo} onChange=${e=>setTipo(e.target.value)}>
+            <option value="ingreso">Ingreso</option>
+            <option value="gasto">Gasto</option>
+          </select>
+        </label>
+      </div>
+      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Categoría
+        <input style=${inputStyle} list="categorias-existentes" value=${categoria} onChange=${e=>setCategoria(e.target.value)} placeholder="Ej: Nafta, Sueldo, Gimnasio" />
+        <datalist id="categorias-existentes">${categorias.map(c=>html`<option key=${c} value=${c} />`)}</datalist>
+      </label>
+      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Monto (ARS)<input style=${inputStyle} type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} /></label>
+      ${error && html`<p style=${{ fontSize:12, color:C.danger, marginTop:8 }}>${error}</p>`}
+      <div style=${{ display:'flex', gap:8, marginTop:12 }}>
+        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Guardar</button>
+        <button onClick=${onCancel} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cerrar</button>
+      </div>
+    </div>
+  `;
+}
+
+function BulkMovimientosForm({ onApply, onClose }) {
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
+  const [tipo, setTipo] = useState('gasto');
+  const [text, setText] = useState('');
+  const [result, setResult] = useState(null);
+  function apply() {
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    let cargados = 0; const invalidas = [];
+    const nuevos = [];
+    lines.forEach(line => {
+      const m = line.match(/^(.+?)[:\s]+([\d]+([.,]\d+)?)\s*$/);
+      if (!m) { invalidas.push(line); return; }
+      const categoria = m[1].trim();
+      const monto = parseFloat(m[2].replace(',', '.'));
+      if (!categoria || !(monto > 0)) { invalidas.push(line); return; }
+      nuevos.push({ fecha, tipo, categoria, monto });
+      cargados++;
+    });
+    if (nuevos.length) onApply(nuevos);
+    setResult({ cargados, total: lines.length, invalidas });
+    setText('');
+  }
+  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 };
+  const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
+  return html`
+    <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+        <label style=${labelStyle}>Fecha (para todos)<input type="date" style=${inputStyle} value=${fecha} onChange=${e=>setFecha(e.target.value)} /></label>
+        <label style=${labelStyle}>Tipo (para todos)
+          <select style=${inputStyle} value=${tipo} onChange=${e=>setTipo(e.target.value)}>
+            <option value="ingreso">Ingreso</option>
+            <option value="gasto">Gasto</option>
+          </select>
+        </label>
+      </div>
+      <p style=${{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por movimiento: categoría, dos puntos, monto. Todos comparten la fecha y el tipo de arriba.</p>
+      <textarea value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'gasoil: 90000\nClio rep Fito: 60000\ngimnasio: 41000'}
+        style=${{ ...inputStyle, fontFamily:'ui-monospace,monospace', minHeight:110, resize:'vertical', boxSizing:'border-box' }}></textarea>
+      ${result && html`<p style=${{ fontSize:12, color: result.invalidas.length ? C.btc : C.accent, marginTop:8 }}>Cargados ${result.cargados} de ${result.total}.${result.invalidas.length>0 ? ` No entendí: ${result.invalidas.join(' · ')}` : ''}</p>`}
+      <div style=${{ display:'flex', gap:8, marginTop:12 }}>
+        <button onClick=${apply} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Cargar todo</button>
+        <button onClick=${onClose} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cerrar</button>
+      </div>
+    </div>
+  `;
+}
+
+function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovimientos, aportes }) {
+  const [monthKey, setMonthKey] = useState(() => new Date().toISOString().slice(0,7));
+  const [showAdd, setShowAdd] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+
+  const categorias = useMemo(() => [...new Set(movimientos.map(m => m.categoria))].sort(), [movimientos]);
+
+  const allMonths = useMemo(() => {
+    const set = new Set([monthKey]);
+    movimientos.forEach(m => set.add(monthKeyOf(m.fecha)));
+    aportes.forEach(a => set.add(monthKeyOf(a.fecha)));
+    return [...set].sort();
+  }, [movimientos, aportes, monthKey]);
+
+  const resumen = useMemo(() => {
+    let acumulado = 0;
+    let seleccionado = null;
+    for (const mk of allMonths) {
+      const ingresosMes = movimientos.filter(m => m.tipo==='ingreso' && monthKeyOf(m.fecha)===mk).reduce((s,m)=>s+m.monto,0);
+      const gastosMes = movimientos.filter(m => m.tipo==='gasto' && monthKeyOf(m.fecha)===mk).reduce((s,m)=>s+m.monto,0);
+      const invertidoMes = aportes.filter(a => monthKeyOf(a.fecha)===mk).reduce((s,a)=>s+a.monto,0);
+      const flujo = ingresosMes - gastosMes - invertidoMes;
+      acumulado += flujo;
+      if (mk === monthKey) seleccionado = { ingresosMes, gastosMes, invertidoMes, flujo, disponible: acumulado };
+    }
+    return seleccionado || { ingresosMes:0, gastosMes:0, invertidoMes:0, flujo:0, disponible: acumulado };
+  }, [allMonths, movimientos, aportes, monthKey]);
+
+  const categoryPieData = useMemo(() => {
+    const map = {};
+    movimientos.filter(m => m.tipo==='gasto' && monthKeyOf(m.fecha)===monthKey).forEach(m => { map[m.categoria] = (map[m.categoria]||0) + m.monto; });
+    const total = Object.values(map).reduce((s,v)=>s+v,0);
+    return Object.entries(map).map(([name,val],i) => ({ name, value: total ? Math.round(val/total*1000)/10 : 0, colorIndex:i }))
+      .filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
+  }, [movimientos, monthKey]);
+
+  const movimientosDelMes = useMemo(() =>
+    movimientos.filter(m => monthKeyOf(m.fecha)===monthKey).sort((a,b)=>b.fecha.localeCompare(a.fecha))
+  , [movimientos, monthKey]);
+
+  const aportesDelMes = useMemo(() => aportes.filter(a => monthKeyOf(a.fecha)===monthKey), [aportes, monthKey]);
+
+  return html`
+    <div className="gestion-wrap">
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Mes</p>
+          <input type="month" value=${monthKey} onChange=${e=>setMonthKey(e.target.value)}
+            className="mono" style=${{ padding:'6px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+        </div>
+        <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+          <div><p style=${{ fontSize:11.5, color:C.inkSoft, margin:'0 0 3px' }}>Ingresos</p><p className="mono" style=${{ fontSize:16, fontWeight:600, margin:0, color:C.accent }}>${fmtARS(resumen.ingresosMes)}</p></div>
+          <div><p style=${{ fontSize:11.5, color:C.inkSoft, margin:'0 0 3px' }}>Gastos</p><p className="mono" style=${{ fontSize:16, fontWeight:600, margin:0, color:C.danger }}>${fmtARS(resumen.gastosMes)}</p></div>
+          <div><p style=${{ fontSize:11.5, color:C.inkSoft, margin:'0 0 3px' }}>Invertido</p><p className="mono" style=${{ fontSize:16, fontWeight:600, margin:0, color:C.btc }}>${fmtARS(resumen.invertidoMes)}</p></div>
+          <div><p style=${{ fontSize:11.5, color:C.inkSoft, margin:'0 0 3px' }}>Disponible</p><p className="mono" style=${{ fontSize:16, fontWeight:600, margin:0 }}>${fmtARS(resumen.disponible)}</p></div>
+        </div>
+        <p style=${{ fontSize:11, color:C.inkFaint, margin:'10px 0 0', lineHeight:1.5 }}>
+          "Disponible" es acumulado: arrastra lo que sobró (o faltó) de meses anteriores, y ya descuenta lo invertido este mes.
+        </p>
+      </div>
+
+      ${categoryPieData.length > 0 && html`
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Gastos por categoría</p>
+          <${DonutChart} data=${categoryPieData} />
+          <${LegendList} data=${categoryPieData} />
+        </div>
+      `}
+
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Movimientos</p>
+          <div style=${{ display:'flex', gap:8 }}>
+            <button onClick=${() => setShowBulk(!showBulk)} style=${{ border:`0.5px solid ${C.border}`, background:'transparent', color:C.inkSoft, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>Pegar varios</button>
+            <button onClick=${() => setShowAdd(!showAdd)} style=${{ border:`1px solid ${C.accent}`, background: showAdd ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
+          </div>
+        </div>
+        ${showBulk && html`<${BulkMovimientosForm} onApply=${bulkAddMovimientos} onClose=${() => setShowBulk(false)} />`}
+        ${showAdd && html`<${AddMovimientoForm} categorias=${categorias} onAdd=${addMovimiento} onCancel=${() => setShowAdd(false)} />`}
+
+        ${aportesDelMes.length > 0 && html`
+          <div style=${{ marginBottom:8 }}>
+            <p style=${{ fontSize:11.5, color:C.inkFaint, margin:'8px 0 4px' }}>Inversión de este mes (se gestiona en Gestión → Registro de aportes)</p>
+            ${aportesDelMes.map(a => html`
+              <div key=${a.id} style=${{ display:'flex', justifyContent:'space-between', padding:'5px 0', fontSize:12.5, color:C.inkSoft }}>
+                <span>${a.fecha}</span><span className="mono">${fmtARS(a.monto)}</span>
+              </div>
+            `)}
+          </div>
+        `}
+
+        ${movimientosDelMes.length === 0 && !showAdd && !showBulk && html`
+          <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>No hay movimientos cargados para este mes.</p>
+        `}
+        ${movimientosDelMes.map(m => html`
+          <div key=${m.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 0', borderTop:`0.5px solid ${C.border}` }}>
+            <div>
+              <p style=${{ fontSize:13.5, margin:0 }}>${m.categoria}</p>
+              <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso' ? 'Ingreso' : 'Gasto'} · ${m.fecha}</span>
+            </div>
+            <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
+              <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso'?'+':'−'} ${fmtARS(m.monto)}</span>
+              <button onClick=${() => removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>
+            </div>
+          </div>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
 /* ---------- app ---------- */
 function App({ user }) {
   const [tab, setTab] = useState('inicio');
@@ -654,6 +860,7 @@ function App({ user }) {
   const [targets, setTargets] = useState(DEFAULT_TARGETS);
   const [positions, setPositions] = useState([]);
   const [aportes, setAportes] = useState([]);
+  const [movimientos, setMovimientos] = useState([]);
   const [history, setHistory] = useState([]);
   const [showAddTarget, setShowAddTarget] = useState(false);
   const [showAddPosition, setShowAddPosition] = useState(false);
@@ -680,11 +887,13 @@ function App({ user }) {
           setTargets(d.targets || DEFAULT_TARGETS);
           setPositions(d.positions || []);
           setAportes(d.aportes || []);
+          setMovimientos(d.movimientos || []);
           setHistory(d.history || []);
         } else {
           setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
           setPositions(loadLS('portfolio-posiciones', []));
           setAportes(loadLS('registro-aportes', []));
+          setMovimientos(loadLS('registro-movimientos', []));
           setHistory(loadLS('historial-valor', []));
         }
       } catch (e) {
@@ -700,11 +909,11 @@ function App({ user }) {
     if (!loaded) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, history }).catch((e) => {
+      setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, movimientos, history }).catch((e) => {
         setLiveStatus('No se pudo guardar en la nube: ' + e.message);
       });
     }, 800);
-  }, [targets, positions, aportes, history, loaded]);
+  }, [targets, positions, aportes, movimientos, history, loaded]);
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
@@ -726,6 +935,12 @@ function App({ user }) {
 
   function addAporte(a) { setAportes([...aportes, { ...a, id:'a'+Date.now() }]); }
   function removeAporte(id) { setAportes(aportes.filter(a => a.id !== id)); }
+
+  function addMovimiento(m) { setMovimientos([...movimientos, { ...m, id:'m'+Date.now() }]); }
+  function removeMovimiento(id) { setMovimientos(movimientos.filter(m => m.id !== id)); }
+  function bulkAddMovimientos(nuevos) {
+    setMovimientos([...movimientos, ...nuevos.map((n,i) => ({ ...n, id:'m'+Date.now()+'-'+i }))]);
+  }
 
   function bulkUpdatePrices(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -871,8 +1086,8 @@ function App({ user }) {
         </button>
       </div>
 
-      <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20, maxWidth:340 }}>
-        ${[['inicio','Inicio'],['gestion','Gestión']].map(([k,label]) => html`
+      <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20, maxWidth:420 }}>
+        ${[['inicio','Inicio'],['gestion','Gestión'],['gastos','Gastos']].map(([k,label]) => html`
           <button key=${k} onClick=${() => setTab(k)} style=${{
             flex:1, padding:'9px 4px', borderRadius:7, border:'none', fontSize:13, fontWeight:500,
             background: tab===k ? C.accent : 'transparent', color: tab===k ? '#0A1512' : C.inkSoft,
@@ -901,6 +1116,11 @@ function App({ user }) {
           fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
           aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
           totalValue=${totalValue} actualValueByName=${actualValueByName}
+        />`}
+
+        ${loaded && tab === 'gastos' && html`<${GastosPanel}
+          movimientos=${movimientos} addMovimiento=${addMovimiento} removeMovimiento=${removeMovimiento} bulkAddMovimientos=${bulkAddMovimientos}
+          aportes=${aportes}
         />`}
       </div>
 
