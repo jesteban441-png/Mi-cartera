@@ -160,7 +160,7 @@ function PlatformBadge({ platform }) {
 }
 
 /* ---------- gráficos ---------- */
-function DonutChart({ data, height }) {
+function DonutChart({ data, height, onSliceClick }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   useEffect(() => {
@@ -169,11 +169,15 @@ function DonutChart({ data, height }) {
     chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
       type: 'doughnut',
       data: { labels: data.map(d=>d.name), datasets: [{ data: data.map(d=>d.value), backgroundColor: data.map((d,i)=>colorFor(d.colorIndex ?? i)), borderWidth:2, borderColor:C.surface }] },
-      options: { responsive:true, maintainAspectRatio:false, cutout:'62%', plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: c => `${c.label}: ${c.parsed}%` } } } },
+      options: {
+        responsive:true, maintainAspectRatio:false, cutout:'62%',
+        onClick: onSliceClick ? (evt, elements) => { if (elements && elements.length > 0) onSliceClick(data[elements[0].index]); } : undefined,
+        plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: c => `${c.label}: ${c.parsed}%` } } },
+      },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
-  return html`<div style=${{ position:'relative', height: height || 240 }}><canvas ref=${canvasRef}></canvas></div>`;
+  return html`<div style=${{ position:'relative', height: height || 240 }}><canvas ref=${canvasRef} style=${{ cursor: onSliceClick ? 'pointer' : 'default' }}></canvas></div>`;
 }
 
 function ComparisonChart({ data }) {
@@ -262,11 +266,16 @@ function ProjectionLine({ points, ajustado }) {
   return html`<div style=${{ position:'relative', height:220 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
-function LegendList({ data }) {
+function LegendList({ data, onItemClick, seleccionado }) {
   return html`
     <div style=${{ display:'flex', flexDirection:'column', gap:6, marginTop:10 }}>
       ${data.map((d,i) => html`
-        <div key=${d.name} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13 }}>
+        <div key=${d.name} onClick=${onItemClick ? () => onItemClick(d) : undefined} style=${{
+          display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13,
+          cursor: onItemClick ? 'pointer' : 'default',
+          padding: onItemClick ? '3px 6px' : 0, margin: onItemClick ? '-3px -6px' : 0, borderRadius:6,
+          background: seleccionado === d.name ? C.accentSoft : 'transparent',
+        }}>
           <span style=${{ display:'flex', alignItems:'center', gap:8, color:C.ink }}>
             <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(d.colorIndex ?? i), flexShrink:0 }}></span>
             ${d.name}
@@ -312,7 +321,7 @@ function AddTargetForm({ onAdd, onCancel }) {
   `;
 }
 
-function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget }) {
+function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget, modoPresentacion }) {
   const [editingId, setEditingId] = useState(null);
   const pieData = targets.map((t,i)=>({ name:t.name, value:t.target, colorIndex:i })).filter(d=>d.value>0);
   const sumOff = Math.round(targetSum*10)/10 !== 100;
@@ -324,29 +333,35 @@ function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, ad
       </div>
       <${DonutChart} data=${pieData} />
       <${LegendList} data=${pieData} />
-      ${sumOff && html`<p style=${{ fontSize:12, color:C.danger, margin:'8px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>`}
+      ${sumOff && !modoPresentacion && html`<p style=${{ fontSize:12, color:C.danger, margin:'8px 0 0' }}>El total no suma 100% — ajustá los porcentajes.</p>`}
 
       <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', margin:'16px 0 12px' }}>
         <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Activos</p>
-        <button onClick=${() => setShowAddTarget(!showAddTarget)} style=${{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
+        ${!modoPresentacion && html`<button onClick=${() => setShowAddTarget(!showAddTarget)} style=${{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>`}
       </div>
-      ${showAddTarget && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
+      ${showAddTarget && !modoPresentacion && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
       ${targets.map((t,i) => html`
         <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0' }}>
           <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
             <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
             <div style=${{ flex:1, minWidth:0 }}>
               <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
-              <button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ display:'flex', alignItems:'center', gap:5, border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
-                <${PlatformBadge} platform=${t.platform} />${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
-              </button>
+              ${modoPresentacion
+                ? html`<span style=${{ display:'flex', alignItems:'center', gap:5, fontSize:11.5, color:C.inkSoft }}><${PlatformBadge} platform=${t.platform} />${t.platform}</span>`
+                : html`<button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ display:'flex', alignItems:'center', gap:5, border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
+                  <${PlatformBadge} platform=${t.platform} />${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
+                </button>`}
             </div>
-            <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
-              className="mono" style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
-            <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
-            <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+            ${modoPresentacion
+              ? html`<span className="mono" style=${{ fontSize:13, color:C.inkSoft }}>${t.target}%</span>`
+              : html`
+                <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
+                  className="mono" style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
+                <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
+                <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+              `}
           </div>
-          ${editingId===t.id && html`
+          ${editingId===t.id && !modoPresentacion && html`
             <div style=${{ display:'flex', flexDirection:'column', gap:8, marginTop:8, paddingLeft:19 }}>
               <input defaultValue=${t.name} onBlur=${e=>renameTarget(t.id, e.target.value)} placeholder="Nombre"
                 style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
@@ -424,7 +439,7 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
   `;
 }
 
-function AportesLog({ aportes, addAporte, removeAporte }) {
+function AportesLog({ aportes, addAporte, removeAporte, modoPresentacion }) {
   const [monto, setMonto] = useState('');
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
   const total = aportes.reduce((s,a) => s + a.monto, 0);
@@ -437,13 +452,15 @@ function AportesLog({ aportes, addAporte, removeAporte }) {
   return html`
     <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
       <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Registro de aportes</p>
-      <div style=${{ display:'flex', gap:8, marginBottom:12 }}>
-        <input type="date" value=${fecha} onChange=${e=>setFecha(e.target.value)}
-          style=${{ padding:'8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
-        <input type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} placeholder="Monto (ARS)"
-          style=${{ flex:1, padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, minWidth:0 }} />
-        <button onClick=${submit} style=${{ padding:'8px 14px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>+</button>
-      </div>
+      ${!modoPresentacion && html`
+        <div style=${{ display:'flex', gap:8, marginBottom:12 }}>
+          <input type="date" value=${fecha} onChange=${e=>setFecha(e.target.value)}
+            style=${{ padding:'8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+          <input type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} placeholder="Monto (ARS)"
+            style=${{ flex:1, padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, minWidth:0 }} />
+          <button onClick=${submit} style=${{ padding:'8px 14px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>+</button>
+        </div>
+      `}
       ${aportes.length === 0
         ? html`<p style=${{ fontSize:13, color:C.inkSoft }}>Todavía no registraste aportes.</p>`
         : html`
@@ -452,7 +469,7 @@ function AportesLog({ aportes, addAporte, removeAporte }) {
               <div key=${a.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 0', borderTop:`0.5px solid ${C.border}` }}>
                 <span className="mono" style=${{ fontSize:13, color:C.inkSoft }}>${a.fecha}</span>
                 <span className="mono" style=${{ fontSize:13.5, fontWeight:500 }}>${fmtARS(a.monto)}</span>
-                <button onClick=${()=>removeAporte(a.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:4 }}>✕</button>
+                ${!modoPresentacion && html`<button onClick=${()=>removeAporte(a.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:4 }}>✕</button>`}
               </div>
             `)}
             <div style=${{ display:'flex', justifyContent:'space-between', paddingTop:10, marginTop:4, borderTop:`1px solid ${C.border}` }}>
@@ -581,7 +598,29 @@ function ProjectionCard({ startValue, defaultRate, defaultInflacion }) {
 }
 
 /* ---------- pestañas ---------- */
-function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
+function useCountUp(value, duration = 700) {
+  const [display, setDisplay] = useState(value);
+  const prevRef = useRef(value);
+  const rafRef = useRef(null);
+  useEffect(() => {
+    const from = prevRef.current;
+    const to = value;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) { setDisplay(to); prevRef.current = to; return; }
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(from + (to - from) * eased);
+      if (t < 1) { rafRef.current = requestAnimationFrame(tick); }
+      else { prevRef.current = to; }
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [value]);
+  return display;
+}
+
+function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, withDerived, history, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, modoPresentacion, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
   const fmtMasked = (n) => hideAmounts ? '•••••••' : fmt(n);
   const accentColor = (dayChange != null && dayChange < 0) ? '#5B9E82' : C.accent;
@@ -601,6 +640,11 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
   const platformLegendData = useMemo(() =>
     platformPieData.map(d => ({ ...d, montoDisplay: fmtMasked(d.monto) }))
   , [platformPieData, showUSD, usdArs, hideAmounts]);
+  const totalValueAnimado = useCountUp(totalValue);
+  const [activoSeleccionado, setActivoSeleccionado] = useState(null);
+  const posicionesSeleccionadas = useMemo(() =>
+    activoSeleccionado ? (withDerived||[]).filter(p => norm(p.name) === norm(activoSeleccionado)) : []
+  , [activoSeleccionado, withDerived]);
   return html`
     <div className="home-grid">
       <div>
@@ -613,13 +657,15 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
                 <button onClick=${()=>setHideAmounts(!hideAmounts)} title=${hideAmounts ? 'Mostrar montos' : 'Ocultar montos'}
                   style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:0, lineHeight:1 }}>${hideAmounts ? '🙈' : '👁'}</button>
               </div>
-              <p className="serif" style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValue)}</p>
+              <p className="serif" style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValueAnimado)}</p>
               <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmtMasked(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
             </div>
-            <div style=${{ display:'flex', gap:6 }}>
-              <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
-              <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
-            </div>
+            ${!modoPresentacion && html`
+              <div style=${{ display:'flex', gap:6 }}>
+                <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
+                <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
+              </div>
+            `}
           </div>
           <div style=${{ display:'flex', alignItems:'center', gap:8, marginTop:14, position:'relative' }}>
             <button onClick=${()=>setShowUSD(false)} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: !showUSD?C.accentSoft:'transparent', color: !showUSD?C.accent:C.inkSoft }}>ARS</button>
@@ -633,7 +679,24 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
             <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
             ${assetPieData.length === 0
               ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
-              : html`<${DonutChart} data=${assetPieData} height=${260} /><${LegendList} data=${assetLegendData} />`}
+              : html`
+                <${DonutChart} data=${assetPieData} height=${260} onSliceClick=${(d) => setActivoSeleccionado(activoSeleccionado === d.name ? null : d.name)} />
+                <${LegendList} data=${assetLegendData} seleccionado=${activoSeleccionado}
+                  onItemClick=${(d) => setActivoSeleccionado(activoSeleccionado === d.name ? null : d.name)} />
+                ${activoSeleccionado && html`
+                  <div style=${{ marginTop:10, padding:'10px 12px', background:C.surfaceAlt, borderRadius:8 }}>
+                    <p style=${{ fontSize:12, fontWeight:500, margin:'0 0 6px' }}>${activoSeleccionado}</p>
+                    ${posicionesSeleccionadas.length === 0
+                      ? html`<p style=${{ fontSize:12, color:C.inkFaint, margin:0 }}>Sin posiciones cargadas con ese nombre.</p>`
+                      : posicionesSeleccionadas.map(p => html`
+                        <div key=${p.id} style=${{ display:'flex', justifyContent:'space-between', fontSize:12, padding:'3px 0' }}>
+                          <span style=${{ color:C.inkSoft }}>${p.units} un. · ${p.platform}</span>
+                          <span className="mono">${fmtMasked(p.value)}</span>
+                        </div>
+                      `)}
+                  </div>
+                `}
+              `}
           </div>
           <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
             <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
@@ -729,7 +792,7 @@ function ChatIA({ contexto }) {
 function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
   comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice,
   showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
-  aportes, addAporte, removeAporte, totalValue, actualValueByName }) {
+  aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion }) {
 
   const [aporteMonto, setAporteMonto] = useState('');
   const sugerencias = useMemo(() => {
@@ -752,7 +815,8 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
   return html`
     <div className="gestion-wrap">
       <${TargetsEditor} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
-        addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget} />
+        addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
+        modoPresentacion=${modoPresentacion} />
 
       ${withDerived.length > 0 && html`
         <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
@@ -761,43 +825,47 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
         </div>
       `}
 
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
-        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Próximo aporte — sugerencia</p>
-        <input type="number" step="any" value=${aporteMonto} onChange=${e=>setAporteMonto(e.target.value)} placeholder="Monto a invertir (ARS)"
-          style=${{ width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5 }} />
-        ${sugerencias && html`
-          <div style=${{ marginTop:10, display:'flex', flexDirection:'column', gap:6 }}>
-            ${sugerencias.map(s => html`
-              <div key=${s.name} style=${{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
-                <span>${s.name}</span><strong className="mono" style=${{ fontWeight:500 }}>${fmtARS(s.amount)}</strong>
-              </div>
-            `)}
-          </div>
-        `}
-      </div>
+      ${!modoPresentacion && html`
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Próximo aporte — sugerencia</p>
+          <input type="number" step="any" value=${aporteMonto} onChange=${e=>setAporteMonto(e.target.value)} placeholder="Monto a invertir (ARS)"
+            style=${{ width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5 }} />
+          ${sugerencias && html`
+            <div style=${{ marginTop:10, display:'flex', flexDirection:'column', gap:6 }}>
+              ${sugerencias.map(s => html`
+                <div key=${s.name} style=${{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+                  <span>${s.name}</span><strong className="mono" style=${{ fontWeight:500 }}>${fmtARS(s.amount)}</strong>
+                </div>
+              `)}
+            </div>
+          `}
+        </div>
+      `}
 
-      <${ChatIA} contexto=${contextoIA} />
+      ${!modoPresentacion && html`<${ChatIA} contexto=${contextoIA} />`}
 
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
         <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Posiciones</p>
-          <div style=${{ display:'flex', gap:8 }}>
-            ${withDerived.length > 0 && html`
-              <button onClick=${fetchLivePrices} disabled=${liveLoading} style=${{ border:`1px solid ${C.accent}`, background:'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>
-                ${liveLoading ? 'Buscando...' : '↻ Precios en vivo'}
-              </button>
-            `}
-            <button onClick=${() => setShowAddPosition(!showAddPosition)} style=${{ border:`1px solid ${C.accent}`, background: showAddPosition ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
-          </div>
+          ${!modoPresentacion && html`
+            <div style=${{ display:'flex', gap:8 }}>
+              ${withDerived.length > 0 && html`
+                <button onClick=${fetchLivePrices} disabled=${liveLoading} style=${{ border:`1px solid ${C.accent}`, background:'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>
+                  ${liveLoading ? 'Buscando...' : '↻ Precios en vivo'}
+                </button>
+              `}
+              <button onClick=${() => setShowAddPosition(!showAddPosition)} style=${{ border:`1px solid ${C.accent}`, background: showAddPosition ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
+            </div>
+          `}
         </div>
-        ${liveStatus && html`<p style=${{ fontSize:12, color:C.inkSoft, marginBottom:10, lineHeight:1.5 }}>${liveStatus}</p>`}
-        ${withDerived.length > 0 && html`
+        ${liveStatus && !modoPresentacion && html`<p style=${{ fontSize:12, color:C.inkSoft, marginBottom:10, lineHeight:1.5 }}>${liveStatus}</p>`}
+        ${!modoPresentacion && withDerived.length > 0 && html`
           <button onClick=${() => setShowBulkUpdate(!showBulkUpdate)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:12, padding:0, marginBottom:12, textDecoration:'underline' }}>
             ${showBulkUpdate ? 'ocultar' : 'o pegar precios a mano'}
           </button>
         `}
-        ${showBulkUpdate && html`<${BulkUpdateForm} onApply=${bulkUpdatePrices} onClose=${() => setShowBulkUpdate(false)} />`}
-        ${showAddPosition && html`<${AddPositionForm} targets=${targets} onAdd=${addPosition} onCancel=${() => setShowAddPosition(false)} />`}
+        ${showBulkUpdate && !modoPresentacion && html`<${BulkUpdateForm} onApply=${bulkUpdatePrices} onClose=${() => setShowBulkUpdate(false)} />`}
+        ${showAddPosition && !modoPresentacion && html`<${AddPositionForm} targets=${targets} onAdd=${addPosition} onCancel=${() => setShowAddPosition(false)} />`}
         ${withDerived.length === 0 && !showAddPosition && html`
           <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Todavía no cargaste ninguna posición.</p>
         `}
@@ -812,15 +880,19 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
                   <span style=${{ fontSize:11, color:C.inkFaint, margin:0 }}>${p.platform}</span>
                 </div>
               </div>
-              <button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
+              ${!modoPresentacion && html`<button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>`}
             </div>
             <div className="mono" style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}${p.fecha ? ' · ' + p.fecha : ''}</div>
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-              <label style=${{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
-                Precio actual
-                <input type="number" step="any" defaultValue=${p.currentPrice} onBlur=${e => updateCurrentPrice(p.id, parseFloat(e.target.value)||0)}
-                  className="mono" style=${{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
-              </label>
+              ${modoPresentacion
+                ? html`<span style=${{ fontSize:12, color:C.inkSoft }}>Precio actual: <strong className="mono">${fmtARS(p.currentPrice)}</strong></span>`
+                : html`
+                  <label style=${{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
+                    Precio actual
+                    <input type="number" step="any" defaultValue=${p.currentPrice} onBlur=${e => updateCurrentPrice(p.id, parseFloat(e.target.value)||0)}
+                      className="mono" style=${{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+                  </label>
+                `}
               <div style=${{ textAlign:'right' }}>
                 <p className="mono" style=${{ fontSize:13.5, fontWeight:500, margin:0 }}>${fmtARS(p.value)}</p>
                 <p className="mono" style=${{ fontSize:12, margin:0, color: p.pl>=0 ? C.accent : C.danger }}>${p.pl>=0?'▲':'▼'} ${fmtPct(p.plPct)}</p>
@@ -830,7 +902,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
         `)}
       </div>
 
-      <${AportesLog} aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte} />
+      <${AportesLog} aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte} modoPresentacion=${modoPresentacion} />
     </div>
   `;
 }
@@ -925,7 +997,7 @@ function BulkMovimientosForm({ onApply, onClose }) {
   `;
 }
 
-function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovimientos, aportes }) {
+function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovimientos, aportes, modoPresentacion }) {
   const [monthKey, setMonthKey] = useState(() => {
     const fechas = [...movimientos.map(m => m.fecha), ...aportes.map(a => a.fecha)].filter(Boolean).sort();
     return fechas.length ? monthKeyOf(fechas[fechas.length - 1]) : new Date().toISOString().slice(0,7);
@@ -1020,13 +1092,15 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
         <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Movimientos</p>
-          <div style=${{ display:'flex', gap:8 }}>
-            <button onClick=${() => setShowBulk(!showBulk)} style=${{ border:`0.5px solid ${C.border}`, background:'transparent', color:C.inkSoft, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>Pegar varios</button>
-            <button onClick=${() => setShowAdd(!showAdd)} style=${{ border:`1px solid ${C.accent}`, background: showAdd ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
-          </div>
+          ${!modoPresentacion && html`
+            <div style=${{ display:'flex', gap:8 }}>
+              <button onClick=${() => setShowBulk(!showBulk)} style=${{ border:`0.5px solid ${C.border}`, background:'transparent', color:C.inkSoft, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>Pegar varios</button>
+              <button onClick=${() => setShowAdd(!showAdd)} style=${{ border:`1px solid ${C.accent}`, background: showAdd ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
+            </div>
+          `}
         </div>
-        ${showBulk && html`<${BulkMovimientosForm} onApply=${bulkAddMovimientos} onClose=${() => setShowBulk(false)} />`}
-        ${showAdd && html`<${AddMovimientoForm} categorias=${categorias} onAdd=${addMovimiento} onCancel=${() => setShowAdd(false)} />`}
+        ${showBulk && !modoPresentacion && html`<${BulkMovimientosForm} onApply=${bulkAddMovimientos} onClose=${() => setShowBulk(false)} />`}
+        ${showAdd && !modoPresentacion && html`<${AddMovimientoForm} categorias=${categorias} onAdd=${addMovimiento} onCancel=${() => setShowAdd(false)} />`}
 
         ${aportesDelMes.length > 0 && html`
           <div style=${{ marginBottom:8 }}>
@@ -1050,7 +1124,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
             </div>
             <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
               <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso'?'+':'−'} ${fmtARS(m.monto)}</span>
-              <button onClick=${() => removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>
+              ${!modoPresentacion && html`<button onClick=${() => removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>`}
             </div>
           </div>
         `)}
@@ -1076,10 +1150,22 @@ function App({ user }) {
   const [usdArs, setUsdArs] = useState(null);
   const [showUSD, setShowUSD] = useState(false);
   const [hideAmounts, setHideAmounts] = useState(() => loadLS('ocultar-montos', false));
+  const [modoPresentacion, setModoPresentacion] = useState(false);
   const [inflacionMensual, setInflacionMensual] = useState([]);
   const [inflacionAnualizada, setInflacionAnualizada] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [frase] = useState(() => FRASES[Math.floor(Math.random()*FRASES.length)]);
+  const TABS_ORDER = ['inicio', 'gestion', 'gastos'];
+  const touchStartX = useRef(null);
+  function handleTouchStart(e) { touchStartX.current = e.touches[0].clientX; }
+  function handleTouchEnd(e) {
+    if (touchStartX.current == null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const idx = TABS_ORDER.indexOf(tab);
+    if (dx < -60 && idx < TABS_ORDER.length - 1) setTab(TABS_ORDER[idx+1]);
+    else if (dx > 60 && idx > 0) setTab(TABS_ORDER[idx-1]);
+    touchStartX.current = null;
+  }
   const fileInputRef = useRef(null);
   const saveTimer = useRef(null);
 
@@ -1307,24 +1393,28 @@ function App({ user }) {
         </button>
       </div>
 
-      <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20, maxWidth:420 }}>
-        ${[['inicio','Inicio'],['gestion','Gestión'],['gastos','Gastos']].map(([k,label]) => html`
-          <button key=${k} onClick=${() => setTab(k)} style=${{
-            flex:1, padding:'9px 4px', borderRadius:7, border:'none', fontSize:13, fontWeight:500,
-            background: tab===k ? C.accent : 'transparent', color: tab===k ? '#0A1512' : C.inkSoft,
-          }}>${label}</button>
-        `)}
+      <div style=${{ display:'flex', alignItems:'center', gap:8, marginBottom:20, maxWidth:420 }}>
+        <div style=${{ display:'flex', flex:1, background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3 }}>
+          ${[['inicio','Inicio'],['gestion','Gestión'],['gastos','Gastos']].map(([k,label]) => html`
+            <button key=${k} onClick=${() => setTab(k)} style=${{
+              flex:1, padding:'9px 4px', borderRadius:7, border:'none', fontSize:13, fontWeight:500,
+              background: tab===k ? C.accent : 'transparent', color: tab===k ? '#0A1512' : C.inkSoft,
+            }}>${label}</button>
+          `)}
+        </div>
+        <button onClick=${() => setModoPresentacion(!modoPresentacion)} title=${modoPresentacion ? 'Salir de modo presentación' : 'Modo presentación (esconde los controles de editar)'}
+          style=${{ border:`0.5px solid ${modoPresentacion ? C.accent : C.border}`, background: modoPresentacion ? C.accentSoft : C.surface, color: modoPresentacion ? C.accent : C.inkSoft, borderRadius:9, width:36, height:36, fontSize:15, flexShrink:0 }}>▣</button>
       </div>
 
       <input ref=${fileInputRef} type="file" accept="application/json" style=${{ display:'none' }} onChange=${handleImportFile} />
 
-      <div key=${tab} className="tab-fade">
+      <div key=${tab} className="tab-fade" onTouchStart=${handleTouchStart} onTouchEnd=${handleTouchEnd}>
         ${!loaded && html`<p style=${{ fontSize:13, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Cargando tu cartera...</p>`}
         ${loaded && tab === 'inicio' && html`<${HomePanel}
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
-          assetPieData=${assetPieData} platformPieData=${platformPieData} history=${history} lastUpdated=${lastUpdated}
+          assetPieData=${assetPieData} platformPieData=${platformPieData} withDerived=${withDerived} history=${history} lastUpdated=${lastUpdated}
           usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
-          hideAmounts=${hideAmounts} setHideAmounts=${setHideAmounts}
+          hideAmounts=${hideAmounts} setHideAmounts=${setHideAmounts} modoPresentacion=${modoPresentacion}
           inflacionMensual=${inflacionMensual} inflacionAnualizada=${inflacionAnualizada}
           onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
         />`}
@@ -1338,12 +1428,12 @@ function App({ user }) {
           showBulkUpdate=${showBulkUpdate} setShowBulkUpdate=${setShowBulkUpdate} bulkUpdatePrices=${bulkUpdatePrices}
           fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
           aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
-          totalValue=${totalValue} actualValueByName=${actualValueByName}
+          totalValue=${totalValue} actualValueByName=${actualValueByName} modoPresentacion=${modoPresentacion}
         />`}
 
         ${loaded && tab === 'gastos' && html`<${GastosPanel}
           movimientos=${movimientos} addMovimiento=${addMovimiento} removeMovimiento=${removeMovimiento} bulkAddMovimientos=${bulkAddMovimientos}
-          aportes=${aportes}
+          aportes=${aportes} modoPresentacion=${modoPresentacion}
         />`}
       </div>
 
