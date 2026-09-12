@@ -665,6 +665,67 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
   `;
 }
 
+function ChatIA({ contexto }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function enviar() {
+    const texto = input.trim();
+    if (!texto || loading) return;
+    const nuevos = [...mensajes, { role:'user', text: texto }];
+    setMensajes(nuevos);
+    setInput('');
+    setLoading(true);
+    setError('');
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mensaje: texto, historial: mensajes, contexto }),
+      });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || 'Error desconocido');
+      setMensajes([...nuevos, { role:'assistant', text: data.respuesta }]);
+    } catch (e) {
+      setError('No se pudo consultar: ' + e.message);
+    }
+    setLoading(false);
+  }
+
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Charlar sobre tu cartera</p>
+      <p style=${{ fontSize:11.5, color:C.inkFaint, margin:'0 0 12px', lineHeight:1.5 }}>
+        Responde en base a tus datos reales, muestra a favor y en contra, y no te dice qué hacer — la decisión es tuya. No es asesoramiento financiero. Se reinicia si recargás la página.
+      </p>
+      ${mensajes.length === 0 && !loading && html`
+        <p style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:12 }}>Ej: "¿Estoy muy concentrado en EE. UU.?" · "¿Tiene sentido el % de cripto que tengo?"</p>
+      `}
+      ${mensajes.length > 0 && html`
+        <div style=${{ display:'flex', flexDirection:'column', gap:8, marginBottom:12, maxHeight:340, overflowY:'auto' }}>
+          ${mensajes.map((m,i) => html`
+            <div key=${i} style=${{
+              alignSelf: m.role==='user' ? 'flex-end' : 'flex-start',
+              maxWidth:'85%', padding:'8px 11px', borderRadius:10, fontSize:13, lineHeight:1.45, whiteSpace:'pre-wrap',
+              background: m.role==='user' ? C.accentSoft : C.surfaceAlt,
+            }}>${m.text}</div>
+          `)}
+          ${loading && html`<div style=${{ alignSelf:'flex-start', fontSize:12.5, color:C.inkFaint, padding:'8px 0' }}>Pensando...</div>`}
+        </div>
+      `}
+      ${error && html`<p style=${{ fontSize:12, color:C.danger, marginBottom:8 }}>${error}</p>`}
+      <div style=${{ display:'flex', gap:8 }}>
+        <input value=${input} onChange=${e=>setInput(e.target.value)} onKeyDown=${e=>{ if(e.key==='Enter') enviar(); }}
+          placeholder="Preguntale algo a la IA..."
+          style=${{ flex:1, padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5 }} />
+        <button onClick=${enviar} disabled=${loading} style=${{ padding:'9px 16px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Enviar</button>
+      </div>
+    </div>
+  `;
+}
+
 function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
   comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice,
   showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
@@ -676,6 +737,17 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
     if (!(monto > 0)) return null;
     return computeRebalance(targets, actualValueByName, totalValue, monto);
   }, [aporteMonto, targets, actualValueByName, totalValue]);
+
+  const contextoIA = useMemo(() => {
+    const totalInvertido = withDerived.reduce((s,p) => s + p.invested, 0);
+    const gananciaPct = totalInvertido ? Math.round((totalValue - totalInvertido) / totalInvertido * 1000) / 10 : 0;
+    return {
+      valorTotalARS: Math.round(totalValue),
+      totalInvertidoARS: Math.round(totalInvertido),
+      gananciaAcumuladaPct: gananciaPct,
+      activos: comparisonData.map(d => ({ nombre: d.name, objetivoPct: d.Objetivo, actualPct: d.Actual })),
+    };
+  }, [totalValue, withDerived, comparisonData]);
 
   return html`
     <div className="gestion-wrap">
@@ -703,6 +775,8 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
           </div>
         `}
       </div>
+
+      <${ChatIA} contexto=${contextoIA} />
 
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
         <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
