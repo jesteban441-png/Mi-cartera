@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Mi cartera en pesos</title>
+<title>Cartera de inversiones</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -11,22 +11,31 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root{
-    --bg:#F4F0E4; --surface:#FFFDF7; --ink:#182A20; --ink-soft:#5C6B5A; --ink-faint:#93A08E;
-    --accent:#0E6B4F; --accent-soft:#DCEADD; --amber:#B8873A; --danger:#A63F2C; --border:rgba(24,42,32,0.14);
+    --bg:#0A1512; --surface:#101E19; --surface-alt:#152922; --ink:#EAF3EE; --ink-soft:#8FA79B; --ink-faint:#5C7268;
+    --accent:#1FD693; --accent-soft:rgba(31,214,147,0.14); --btc:#F7A93B; --ar:#63B4E0; --danger:#FF6B5B;
+    --border:rgba(234,243,238,0.10);
   }
   * { box-sizing: border-box; }
   body {
     margin:0; font-family:'Work Sans',-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--ink);
-    background-color:#F4F0E4;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='40'%3E%3Cpath d='M0 20 Q17.5 5 35 20 T70 20 T105 20 T140 20' stroke='%230E6B4F' stroke-width='0.6' fill='none' opacity='0.06'/%3E%3Cpath d='M0 32 Q17.5 17 35 32 T70 32 T105 32 T140 32' stroke='%230E6B4F' stroke-width='0.5' fill='none' opacity='0.045'/%3E%3C/svg%3E");
+    background-color:#0A1512;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='170'%3E%3Ctext x='6' y='46' font-family='Georgia,serif' font-size='36' fill='%231FD693' opacity='0.05'%3E%24%3C/text%3E%3Ctext x='130' y='96' font-family='Georgia,serif' font-size='30' fill='%23F7A93B' opacity='0.05'%3E%E2%82%BF%3C/text%3E%3Ctext x='40' y='146' font-family='Georgia,serif' font-size='20' fill='%2363B4E0' opacity='0.05'%3EAR%24%3C/text%3E%3C/svg%3E");
     background-repeat: repeat;
   }
   .serif { font-family:'Fraunces',Georgia,serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   button { font-family:inherit; cursor:pointer; }
-  input, select, textarea { font-family:inherit; }
-  #root { max-width:480px; margin:0 auto; padding:1.25rem 1rem 3rem; }
+  input, select, textarea { font-family:inherit; background:#152922; color:#EAF3EE; }
+  input::placeholder, textarea::placeholder { color:#5C7268; }
+  #root { max-width:1100px; margin:0 auto; padding:1.5rem 1.5rem 3rem; }
+  @media (max-width: 700px) { #root { padding:1.25rem 1rem 3rem; } }
   @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
   .tab-fade { animation: fadeIn 0.25s ease; }
+  .home-grid { display:grid; grid-template-columns: 1fr; gap:16px; align-items:start; }
+  @media (min-width: 900px) { .home-grid { grid-template-columns: 2.1fr 1fr; } }
+  .donut-row { display:flex; flex-direction:column; gap:16px; }
+  @media (min-width: 620px) { .donut-row { flex-direction:row; } .donut-row > div { flex:1; min-width:0; } }
+  .gestion-wrap { max-width:680px; margin:0 auto; }
 </style>
 </head>
 <body>
@@ -37,13 +46,17 @@ const { useState, useEffect, useMemo, useRef } = React;
 const html = htm.bind(React.createElement);
 
 const C = {
-  bg:'#F4F0E4', surface:'#FFFDF7', ink:'#182A20', inkSoft:'#5C6B5A', inkFaint:'#93A08E',
-  accent:'#0E6B4F', accentSoft:'#DCEADD', amber:'#B8873A', danger:'#A63F2C', border:'rgba(24,42,32,0.14)',
+  bg:'#0A1512', surface:'#101E19', surfaceAlt:'#152922', ink:'#EAF3EE', inkSoft:'#8FA79B', inkFaint:'#5C7268',
+  accent:'#1FD693', accentSoft:'rgba(31,214,147,0.14)', btc:'#F7A93B', ar:'#63B4E0', danger:'#FF6B5B',
+  border:'rgba(234,243,238,0.10)',
 };
-const PALETTE = ['#0E6B4F','#B8873A','#3B6E8F','#8C7355','#7A4F8C','#A63F2C','#4F7A3D','#2A5C8A','#A85C3B','#5B5B8C'];
+const PALETTE = ['#1FD693','#F7A93B','#63B4E0','#B98CE0','#E0748C','#6FE0C0','#E0C158','#7C93E0','#E08F5B','#8FA79B'];
 const colorFor = (i) => PALETTE[i % PALETTE.length];
 const PLATFORMS = ['IOL', 'Bullmarket', 'BingX', 'Mercado Pago', 'Otro'];
-const PLATFORM_ICONS = { IOL:'🏦', Bullmarket:'📈', BingX:'₿', 'Mercado Pago':'💳', Otro:'●' };
+const PLATFORM_BADGES = {
+  IOL: { symbol:'IO', bg:C.ar }, Bullmarket: { symbol:'BM', bg:C.accent }, BingX: { symbol:'₿', bg:C.btc },
+  'Mercado Pago': { symbol:'MP', bg:C.ar }, Otro: { symbol:'•', bg:C.inkFaint },
+};
 
 const DEFAULT_TARGETS = [
   { id:'t1', name:'SPY', ticker:'SPY', platform:'Bullmarket', target:40 },
@@ -55,6 +68,19 @@ const DEFAULT_TARGETS = [
   { id:'t7', name:'USDT (staking)', ticker:'USDT', platform:'BingX', target:5 },
   { id:'t8', name:'Acciones argentinas', ticker:'', platform:'IOL', target:5 },
   { id:'t9', name:'Bonos argentinos', ticker:'', platform:'IOL', target:5 },
+];
+
+const FRASES = [
+  'El dinero que no trabaja, se queda dormido.',
+  'Ahorrar es el primer paso. Invertir es el segundo.',
+  'La paciencia es la mejor estrategia de inversión.',
+  'Cada peso invertido hoy es tiempo ganado mañana.',
+  'Diversificar no es desconfiar, es cuidar lo que construiste.',
+  'El interés compuesto no hace ruido, pero hace magia.',
+  'Invertir es sembrar hoy la tranquilidad de mañana.',
+  'No se trata de acertar siempre — se trata de no parar.',
+  'Un plan simple, sostenido en el tiempo, le gana a cualquier golpe de suerte.',
+  'Lo que se mide, se puede mejorar — por eso estás acá.',
 ];
 
 const fmtARS = (n) => new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 }).format(n || 0);
@@ -83,8 +109,16 @@ function computeRebalance(targets, actualValueByName, totalValue, aporte) {
   return result.filter(r => r.amount > 0.5).sort((a,b) => b.amount - a.amount);
 }
 
+function CoinBadge({ symbol, bg, size=16 }) {
+  return html`<span style=${{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:size, height:size, borderRadius:'50%', background:bg, color:'#0A1512', fontSize:size*0.52, fontWeight:700, flexShrink:0 }}>${symbol}</span>`;
+}
+function PlatformBadge({ platform }) {
+  const b = PLATFORM_BADGES[platform] || PLATFORM_BADGES.Otro;
+  return html`<${CoinBadge} symbol=${b.symbol} bg=${b.bg} />`;
+}
+
 /* ---------- gráficos ---------- */
-function DonutChart({ data }) {
+function DonutChart({ data, height }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   useEffect(() => {
@@ -92,12 +126,12 @@ function DonutChart({ data }) {
     if (chartRef.current) chartRef.current.destroy();
     chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
       type: 'doughnut',
-      data: { labels: data.map(d=>d.name), datasets: [{ data: data.map(d=>d.value), backgroundColor: data.map((d,i)=>colorFor(d.colorIndex ?? i)), borderWidth:2, borderColor:'#fff' }] },
+      data: { labels: data.map(d=>d.name), datasets: [{ data: data.map(d=>d.value), backgroundColor: data.map((d,i)=>colorFor(d.colorIndex ?? i)), borderWidth:2, borderColor:C.surface }] },
       options: { responsive:true, maintainAspectRatio:false, cutout:'62%', plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: c => `${c.label}: ${c.parsed}%` } } } },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
-  return html`<div style=${{ position:'relative', height:210 }}><canvas ref=${canvasRef}></canvas></div>`;
+  return html`<div style=${{ position:'relative', height: height || 240 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
 function ComparisonChart({ data }) {
@@ -112,14 +146,14 @@ function ComparisonChart({ data }) {
       data: {
         labels: data.map(d=>d.name),
         datasets: [
-          { label:'Objetivo', data: data.map(d=>d.Objetivo), backgroundColor: C.amber, borderRadius:4 },
+          { label:'Objetivo', data: data.map(d=>d.Objetivo), backgroundColor: C.btc, borderRadius:4 },
           { label:'Actual', data: data.map(d=>d.Actual), backgroundColor: C.accent, borderRadius:4 },
         ],
       },
       options: {
         indexAxis:'y', responsive:true, maintainAspectRatio:false,
-        scales: { x:{ ticks:{ callback: v => v + '%' }, grid:{ color:C.border } }, y:{ grid:{ display:false } } },
-        plugins: { legend:{ position:'top', labels:{ boxWidth:10, font:{ size:12 } } }, tooltip:{ callbacks:{ label: c => `${c.dataset.label}: ${c.parsed.x}%` } } },
+        scales: { x:{ ticks:{ color:C.inkSoft, callback: v => v + '%' }, grid:{ color:C.border } }, y:{ ticks:{ color:C.ink }, grid:{ display:false } } },
+        plugins: { legend:{ position:'top', labels:{ color:C.inkSoft, boxWidth:10, font:{ size:12 } } }, tooltip:{ callbacks:{ label: c => `${c.dataset.label}: ${c.parsed.x}%` } } },
       },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
@@ -140,17 +174,40 @@ function EvolutionChart({ history }) {
         labels: sorted.map(h => h.date.slice(5)),
         datasets: [
           { label:'Cartera', data: sorted.map(h=>h.value), borderColor:C.accent, backgroundColor:C.accent, tension:0.3, pointRadius:2 },
-          { label:'Ahorro sin invertir', data: sorted.map(h=>h.invested), borderColor:C.amber, backgroundColor:C.amber, borderDash:[5,4], tension:0, pointRadius:2 },
+          { label:'Ahorro sin invertir', data: sorted.map(h=>h.invested), borderColor:C.btc, backgroundColor:C.btc, borderDash:[5,4], tension:0, pointRadius:2 },
         ],
       },
       options: {
         responsive:true, maintainAspectRatio:false,
-        scales: { y:{ ticks:{ callback: v => fmtARS(v) }, grid:{ color:C.border } }, x:{ grid:{ display:false } } },
-        plugins: { legend:{ position:'top', labels:{ boxWidth:10, font:{ size:12 } } } },
+        scales: { y:{ ticks:{ color:C.inkSoft, callback: v => fmtARS(v) }, grid:{ color:C.border } }, x:{ ticks:{ color:C.inkSoft }, grid:{ display:false } } },
+        plugins: { legend:{ position:'top', labels:{ color:C.inkSoft, boxWidth:10, font:{ size:12 } } } },
       },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(history)]);
+  return html`<div style=${{ position:'relative', height:220 }}><canvas ref=${canvasRef}></canvas></div>`;
+}
+
+function ProjectionLine({ points }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: points.map(p => `Año ${p.year}`),
+        datasets: [{ label:'Proyección', data: points.map(p=>p.value), borderColor:C.accent, backgroundColor:'rgba(31,214,147,0.12)', fill:true, tension:0.35, pointRadius:0 }],
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        scales: { y:{ ticks:{ color:C.inkSoft, callback: v => fmtARS(v) }, grid:{ color:C.border } }, x:{ ticks:{ color:C.inkSoft }, grid:{ display:false } } },
+        plugins: { legend:{ display:false } },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [JSON.stringify(points)]);
   return html`<div style=${{ position:'relative', height:220 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
@@ -161,9 +218,9 @@ function LegendList({ data }) {
         <div key=${d.name} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13 }}>
           <span style=${{ display:'flex', alignItems:'center', gap:8, color:C.ink }}>
             <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(d.colorIndex ?? i), flexShrink:0 }}></span>
-            ${d.icon ? d.icon + ' ' : ''}${d.name}
+            ${d.name}
           </span>
-          <strong style=${{ fontWeight:500, color:C.inkSoft }}>${d.value}%</strong>
+          <strong className="mono" style=${{ fontWeight:500, color:C.inkSoft }}>${d.value}%</strong>
         </div>
       `)}
     </div>
@@ -183,7 +240,7 @@ function AddTargetForm({ onAdd, onCancel }) {
   const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
   const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
   return html`
-    <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
+    <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
       <label style=${labelStyle}>Nombre<input style=${inputStyle} value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: Oro" /></label>
       <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
         <label style=${labelStyle}>Ticker (opcional)<input style=${inputStyle} value=${ticker} onChange=${e=>setTicker(e.target.value)} placeholder="Ej: GOLD" /></label>
@@ -194,7 +251,7 @@ function AddTargetForm({ onAdd, onCancel }) {
       <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>% objetivo<input style=${inputStyle} type="number" step="any" value=${target} onChange=${e=>setTarget(e.target.value)} /></label>
       ${error && html`<p style=${{ fontSize:12, color:C.danger, marginTop:8 }}>${error}</p>`}
       <div style=${{ display:'flex', gap:8, marginTop:12 }}>
-        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Guardar</button>
+        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Guardar</button>
         <button onClick=${onCancel} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
       </div>
     </div>
@@ -209,7 +266,7 @@ function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, ad
     <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
       <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
         <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Cartera objetivo</p>
-        <span style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>
+        <span className="mono" style=${{ fontSize:12.5, fontWeight:500, color: sumOff ? C.danger : C.accent }}>${fmtPct(targetSum)} ${sumOff ? '' : '✓'}</span>
       </div>
       <${DonutChart} data=${pieData} />
       <${LegendList} data=${pieData} />
@@ -226,12 +283,12 @@ function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, ad
             <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(i), flexShrink:0 }}></span>
             <div style=${{ flex:1, minWidth:0 }}>
               <p style=${{ fontSize:13.5, fontWeight:500, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>${t.name}</p>
-              <button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
-                ${(PLATFORM_ICONS[t.platform]||'') + ' '}${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
+              <button onClick=${() => setEditingId(editingId===t.id ? null : t.id)} style=${{ display:'flex', alignItems:'center', gap:5, border:'none', background:'none', padding:0, fontSize:11.5, color:C.inkSoft, textDecoration:'underline' }}>
+                <${PlatformBadge} platform=${t.platform} />${t.ticker ? `${t.ticker} · ` : ''}${t.platform} ✎
               </button>
             </div>
             <input type="number" step="any" value=${t.target} onChange=${e => updateTargetPct(t.id, parseFloat(e.target.value)||0)}
-              style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
+              className="mono" style=${{ width:56, padding:'5px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13, textAlign:'right' }} />
             <span style=${{ fontSize:12.5, color:C.inkSoft }}>%</span>
             <button onClick=${() => removeTarget(t.id)} aria-label="Eliminar" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
           </div>
@@ -259,14 +316,14 @@ function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, ad
 function BulkUpdateForm({ onApply, onClose }) {
   const [text, setText] = useState(''); const [result, setResult] = useState(null);
   function apply() { setResult(onApply(text)); }
-  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4, fontFamily:'monospace', minHeight:90, resize:'vertical', boxSizing:'border-box' };
+  const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4, fontFamily:'ui-monospace,monospace', minHeight:90, resize:'vertical', boxSizing:'border-box' };
   return html`
-    <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
+    <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
       <p style=${{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por activo: nombre, dos puntos, precio (punto para decimales).</p>
       <textarea style=${inputStyle} value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'SPY: 20400\nBitcoin: 61234000'}></textarea>
-      ${result && html`<p style=${{ fontSize:12, color: result.unmatched.length ? C.amber : C.accent, marginTop:8 }}>Actualizadas ${result.matched} de ${result.total}.${result.unmatched.length>0 ? ` No encontré: ${result.unmatched.join(' · ')}` : ''}</p>`}
+      ${result && html`<p style=${{ fontSize:12, color: result.unmatched.length ? C.btc : C.accent, marginTop:8 }}>Actualizadas ${result.matched} de ${result.total}.${result.unmatched.length>0 ? ` No encontré: ${result.unmatched.join(' · ')}` : ''}</p>`}
       <div style=${{ display:'flex', gap:8, marginTop:12 }}>
-        <button onClick=${apply} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Aplicar</button>
+        <button onClick=${apply} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Aplicar</button>
         <button onClick=${onClose} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cerrar</button>
       </div>
     </div>
@@ -287,7 +344,7 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
   const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
   const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
   return html`
-    <div style=${{ background:C.bg, borderRadius:10, padding:12, marginBottom:12 }}>
+    <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
       <label style=${labelStyle}>Nombre del activo
         <input style=${inputStyle} list="target-names" value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: SPY" />
         <datalist id="target-names">${targets.map(t=>html`<option key=${t.id} value=${t.name} />`)}</datalist>
@@ -302,7 +359,7 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
       <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Precio actual (ARS)<input style=${inputStyle} type="number" step="any" value=${currentPrice} onChange=${e=>setCurrentPrice(e.target.value)} /></label>
       ${error && html`<p style=${{ fontSize:12, color:C.danger, marginTop:8 }}>${error}</p>`}
       <div style=${{ display:'flex', gap:8, marginTop:12 }}>
-        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>Guardar</button>
+        <button onClick=${submit} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Guardar</button>
         <button onClick=${onCancel} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
       </div>
     </div>
@@ -327,7 +384,7 @@ function AportesLog({ aportes, addAporte, removeAporte }) {
           style=${{ padding:'8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
         <input type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} placeholder="Monto (ARS)"
           style=${{ flex:1, padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, minWidth:0 }} />
-        <button onClick=${submit} style=${{ padding:'8px 14px', borderRadius:7, border:'none', background:C.accent, color:'#fff', fontSize:13, fontWeight:500 }}>+</button>
+        <button onClick=${submit} style=${{ padding:'8px 14px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>+</button>
       </div>
       ${aportes.length === 0
         ? html`<p style=${{ fontSize:13, color:C.inkSoft }}>Todavía no registraste aportes.</p>`
@@ -335,14 +392,14 @@ function AportesLog({ aportes, addAporte, removeAporte }) {
           <div>
             ${aportes.slice().reverse().map(a => html`
               <div key=${a.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 0', borderTop:`0.5px solid ${C.border}` }}>
-                <span style=${{ fontSize:13, color:C.inkSoft }}>${a.fecha}</span>
-                <span style=${{ fontSize:13.5, fontWeight:500 }}>${fmtARS(a.monto)}</span>
+                <span className="mono" style=${{ fontSize:13, color:C.inkSoft }}>${a.fecha}</span>
+                <span className="mono" style=${{ fontSize:13.5, fontWeight:500 }}>${fmtARS(a.monto)}</span>
                 <button onClick=${()=>removeAporte(a.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:4 }}>✕</button>
               </div>
             `)}
             <div style=${{ display:'flex', justifyContent:'space-between', paddingTop:10, marginTop:4, borderTop:`1px solid ${C.border}` }}>
               <strong style=${{ fontSize:13 }}>Total aportado</strong>
-              <strong style=${{ fontSize:13 }}>${fmtARS(total)}</strong>
+              <strong className="mono" style=${{ fontSize:13 }}>${fmtARS(total)}</strong>
             </div>
           </div>
         `}
@@ -350,52 +407,123 @@ function AportesLog({ aportes, addAporte, removeAporte }) {
   `;
 }
 
+function NewsPanel() {
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    fetch('/api/noticias').then(r=>r.json()).then(data => {
+      if (data.ok) setItems(data.items); else setError(true);
+    }).catch(() => setError(true));
+  }, []);
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.1rem' }}>
+      <p className="serif" style=${{ fontSize:15, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase', textAlign:'center',
+        margin:0, padding:'0 0 10px', borderBottom:`1px solid ${C.border}` }}>Titulares del mercado</p>
+      <div style=${{ paddingTop:10 }}>
+        ${error && html`<p style=${{ fontSize:12.5, color:C.inkFaint }}>No se pudieron cargar las noticias ahora. Probá de nuevo más tarde.</p>`}
+        ${!error && items === null && html`<p style=${{ fontSize:12.5, color:C.inkFaint }}>Buscando titulares...</p>`}
+        ${!error && items && items.length === 0 && html`<p style=${{ fontSize:12.5, color:C.inkFaint }}>Sin novedades por ahora.</p>`}
+        ${items && items.map((n,i) => html`
+          <a key=${i} href=${n.link} target="_blank" rel="noopener noreferrer" style=${{ display:'block', textDecoration:'none', padding:'9px 0', borderTop: i>0 ? `0.5px solid ${C.border}` : 'none' }}>
+            <p style=${{ fontSize:13, color:C.ink, margin:0, lineHeight:1.4 }}>${n.title}</p>
+            ${n.source && html`<p style=${{ fontSize:11, color:C.inkFaint, margin:'3px 0 0' }}>${n.source}</p>`}
+          </a>
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+function ProjectionCard({ startValue, defaultRate }) {
+  const [aporte, setAporte] = useState(150000);
+  const [tasaAnual, setTasaAnual] = useState(() => { const r = Math.round((defaultRate||0)*10)/10; return r > 0 ? r : 12; });
+  const years = 10;
+  const points = useMemo(() => {
+    const rMensual = Math.pow(1 + tasaAnual/100, 1/12) - 1;
+    const pts = [];
+    let v = startValue;
+    for (let m = 0; m <= years*12; m++) {
+      if (m % 12 === 0) pts.push({ year: m/12, value: Math.round(v) });
+      v = v*(1+rMensual) + (aporte || 0);
+    }
+    return pts;
+  }, [startValue, aporte, tasaAnual]);
+  const final = points[points.length-1];
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Proyección a ${years} años</p>
+      <p style=${{ fontSize:12, color:C.inkFaint, margin:'0 0 12px', lineHeight:1.5 }}>
+        Si seguís aportando y tu cartera mantiene el ritmo que asumas acá — es una simulación, no una promesa.
+      </p>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+        <label style=${{ fontSize:12, color:C.inkSoft }}>Aporte mensual (ARS)
+          <input type="number" step="any" value=${aporte} onChange=${e=>setAporte(parseFloat(e.target.value)||0)}
+            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
+        </label>
+        <label style=${{ fontSize:12, color:C.inkSoft }}>Tasa anual asumida (%)
+          <input type="number" step="any" value=${tasaAnual} onChange=${e=>setTasaAnual(parseFloat(e.target.value)||0)}
+            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
+        </label>
+      </div>
+      <${ProjectionLine} points=${points} />
+      <p className="mono" style=${{ fontSize:13, color:C.accent, margin:'10px 0 0', textAlign:'right' }}>Año ${years}: ${fmtARS(final.value)}</p>
+    </div>
+  `;
+}
+
 /* ---------- pestañas ---------- */
 function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
-  const accentColor = (dayChange != null && dayChange < 0) ? '#6B8F7C' : C.accent;
+  const accentColor = (dayChange != null && dayChange < 0) ? '#5B9E82' : C.accent;
   return html`
-    <div>
-      <div style=${{ position:'relative', overflow:'hidden', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:14, padding:'1.5rem 1.25rem', marginBottom:16 }}>
-        <span style=${{ position:'absolute', right:-14, top:-38, fontSize:170, fontFamily:"'Fraunces',serif", color:accentColor, opacity:0.07, pointerEvents:'none', userSelect:'none' }}>$</span>
-        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', position:'relative' }}>
-          <div>
-            <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'0 0 4px' }}>Valor total</p>
-            <p className="serif" style=${{ fontSize:32, fontWeight:500, margin:0, color:accentColor }}>${fmt(totalValue)}</p>
-            <p style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmt(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
+    <div className="home-grid">
+      <div>
+        <div style=${{ position:'relative', overflow:'hidden', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:14, padding:'1.5rem 1.25rem', marginBottom:16 }}>
+          <span style=${{ position:'absolute', right:-14, top:-38, fontSize:170, fontFamily:"'Fraunces',serif", color:accentColor, opacity:0.09, pointerEvents:'none', userSelect:'none' }}>$</span>
+          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', position:'relative' }}>
+            <div>
+              <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'0 0 4px' }}>Valor total</p>
+              <p className="serif" style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmt(totalValue)}</p>
+              <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmt(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
+            </div>
+            <div style=${{ display:'flex', gap:6 }}>
+              <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
+              <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
+            </div>
           </div>
-          <div style=${{ display:'flex', gap:6 }}>
-            <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surface, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
-            <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surface, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
+          <div style=${{ display:'flex', alignItems:'center', gap:8, marginTop:14, position:'relative' }}>
+            <button onClick=${()=>setShowUSD(false)} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: !showUSD?C.accentSoft:'transparent', color: !showUSD?C.accent:C.inkSoft }}>ARS</button>
+            <button onClick=${()=>setShowUSD(true)} disabled=${!usdArs} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: showUSD?C.accentSoft:'transparent', color: showUSD?C.accent:C.inkSoft }}>USD</button>
+            ${lastUpdated && html`<span className="mono" style=${{ fontSize:11, color:C.inkFaint, marginLeft:'auto' }}>Actualizado ${lastUpdated}</span>`}
           </div>
         </div>
-        <div style=${{ display:'flex', alignItems:'center', gap:8, marginTop:14, position:'relative' }}>
-          <button onClick=${()=>setShowUSD(false)} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: !showUSD?C.accentSoft:'transparent', color: !showUSD?C.accent:C.inkSoft }}>ARS</button>
-          <button onClick=${()=>setShowUSD(true)} disabled=${!usdArs} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: showUSD?C.accentSoft:'transparent', color: showUSD?C.accent:C.inkSoft }}>USD</button>
-          ${lastUpdated && html`<span style=${{ fontSize:11, color:C.inkFaint, marginLeft:'auto' }}>Actualizado ${lastUpdated}</span>`}
+
+        <div className="donut-row" style=${{ marginBottom:16 }}>
+          <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+            <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
+            ${assetPieData.length === 0
+              ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
+              : html`<${DonutChart} data=${assetPieData} height=${260} /><${LegendList} data=${assetPieData} />`}
+          </div>
+          <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+            <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
+            ${platformPieData.length === 0
+              ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
+              : html`<${DonutChart} data=${platformPieData} height=${260} /><${LegendList} data=${platformPieData} />`}
+          </div>
         </div>
+
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Cartera vs. ahorro sin invertir</p>
+          ${history.length < 2
+            ? html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Se va armando solo, un punto por día que abrís la app.</p>`
+            : html`<${EvolutionChart} history=${history} />`}
+        </div>
+
+        <${ProjectionCard} startValue=${totalValue} defaultRate=${totalPLPct} />
       </div>
 
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
-        ${assetPieData.length === 0
-          ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión para verlo acá.</p>`
-          : html`<${DonutChart} data=${assetPieData} /><${LegendList} data=${assetPieData} />`}
-      </div>
-
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
-        ${platformPieData.length === 0
-          ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión para verlo acá.</p>`
-          : html`<${DonutChart} data=${platformPieData} /><${LegendList} data=${platformPieData} />`}
-      </div>
-
-      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-        <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Cartera vs. ahorro sin invertir</p>
-        ${history.length < 2
-          ? html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Se va armando solo, un punto por día que abrís la app. En un par de semanas ya se ve la curva.</p>`
-          : html`<${EvolutionChart} history=${history} />`}
-      </div>
+      <${NewsPanel} />
     </div>
   `;
 }
@@ -413,7 +541,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
   }, [aporteMonto, targets, actualValueByName, totalValue]);
 
   return html`
-    <div>
+    <div className="gestion-wrap">
       <${TargetsEditor} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
         addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget} />
 
@@ -432,7 +560,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
           <div style=${{ marginTop:10, display:'flex', flexDirection:'column', gap:6 }}>
             ${sugerencias.map(s => html`
               <div key=${s.name} style=${{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
-                <span>${s.name}</span><strong style=${{ fontWeight:500 }}>${fmtARS(s.amount)}</strong>
+                <span>${s.name}</span><strong className="mono" style=${{ fontWeight:500 }}>${fmtARS(s.amount)}</strong>
               </div>
             `)}
           </div>
@@ -464,24 +592,27 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
         `}
         ${withDerived.map(p => html`
           <div key=${p.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'12px 10px', margin:'0 -10px', borderRadius:8,
-            background: p.pl>=0 ? 'rgba(14,107,79,0.06)' : 'rgba(166,63,44,0.06)' }}>
+            background: p.pl>=0 ? 'rgba(31,214,147,0.07)' : 'rgba(255,107,91,0.07)' }}>
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
-              <div>
-                <p style=${{ fontSize:14, fontWeight:500, margin:0 }}>${p.name}</p>
-                <span style=${{ fontSize:11, color:C.inkSoft, background:C.bg, padding:'2px 7px', borderRadius:5, display:'inline-block', marginTop:4 }}>${(PLATFORM_ICONS[p.platform]||'') + ' ' + p.platform}</span>
+              <div style=${{ display:'flex', alignItems:'center', gap:8 }}>
+                <${PlatformBadge} platform=${p.platform} />
+                <div>
+                  <p style=${{ fontSize:14, fontWeight:500, margin:0 }}>${p.name}</p>
+                  <span style=${{ fontSize:11, color:C.inkFaint, margin:0 }}>${p.platform}</span>
+                </div>
               </div>
               <button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
             </div>
-            <div style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}</div>
+            <div className="mono" style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}</div>
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <label style=${{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
                 Precio actual
                 <input type="number" step="any" defaultValue=${p.currentPrice} onBlur=${e => updateCurrentPrice(p.id, parseFloat(e.target.value)||0)}
-                  style=${{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+                  className="mono" style=${{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
               </label>
               <div style=${{ textAlign:'right' }}>
-                <p style=${{ fontSize:13.5, fontWeight:500, margin:0 }}>${fmtARS(p.value)}</p>
-                <p style=${{ fontSize:12, margin:0, color: p.pl>=0 ? C.accent : C.danger }}>${p.pl>=0?'▲':'▼'} ${fmtPct(p.plPct)}</p>
+                <p className="mono" style=${{ fontSize:13.5, fontWeight:500, margin:0 }}>${fmtARS(p.value)}</p>
+                <p className="mono" style=${{ fontSize:12, margin:0, color: p.pl>=0 ? C.accent : C.danger }}>${p.pl>=0?'▲':'▼'} ${fmtPct(p.plPct)}</p>
               </div>
             </div>
           </div>
@@ -508,6 +639,7 @@ function App() {
   const [usdArs, setUsdArs] = useState(null);
   const [showUSD, setShowUSD] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [frase] = useState(() => FRASES[Math.floor(Math.random()*FRASES.length)]);
   const fileInputRef = useRef(null);
 
   useEffect(() => { saveLS('cartera-objetivo', targets); }, [targets]);
@@ -639,7 +771,7 @@ function App() {
     const map = {};
     withDerived.forEach(p => { map[p.platform] = (map[p.platform]||0) + p.value; });
     return Object.entries(map).filter(([,v]) => v > 0).map(([plat,val],i) => ({
-      name: plat, value: Math.round(val/(totalValue||1)*1000)/10, colorIndex: i, icon: PLATFORM_ICONS[plat] || '',
+      name: plat, value: Math.round(val/(totalValue||1)*1000)/10, colorIndex: i,
     })).sort((a,b) => b.value - a.value);
   }, [withDerived, totalValue]);
 
@@ -674,14 +806,14 @@ function App() {
 
   return html`
     <div>
-      <h1 className="serif" style=${{ fontSize:22, fontWeight:500, margin:'0 0 2px' }}>Mi cartera en pesos</h1>
-      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px' }}>Todo a la vista apenas entrás.</p>
+      <h1 className="serif" style=${{ fontSize:24, fontWeight:600, letterSpacing:'0.04em', margin:'0 0 4px', color:C.accent }}>CARTERA DE INVERSIONES</h1>
+      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px', fontStyle:'italic' }}>${frase}</p>
 
-      <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20 }}>
+      <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20, maxWidth:340 }}>
         ${[['inicio','Inicio'],['gestion','Gestión']].map(([k,label]) => html`
           <button key=${k} onClick=${() => setTab(k)} style=${{
             flex:1, padding:'9px 4px', borderRadius:7, border:'none', fontSize:13, fontWeight:500,
-            background: tab===k ? C.accent : 'transparent', color: tab===k ? '#fff' : C.inkSoft,
+            background: tab===k ? C.accent : 'transparent', color: tab===k ? '#0A1512' : C.inkSoft,
           }}>${label}</button>
         `)}
       </div>
@@ -709,10 +841,10 @@ function App() {
         />`}
       </div>
 
-      <p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:28, lineHeight:1.6 }}>
-        Herramienta personal y educativa, no es asesoramiento financiero. Los precios en vivo vienen de fuentes públicas
-        gratuitas (data912.com, dolarapi.com y CoinGecko), no oficiales ni garantizadas. Para decisiones importantes,
-        confirmá siempre en IOL, Bullmarket o BingX.
+      <p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:28, lineHeight:1.6, maxWidth:680 }}>
+        Herramienta personal y educativa, no es asesoramiento financiero. Precios en vivo de fuentes públicas gratuitas
+        (data912.com, dolarapi.com, CoinGecko) y titulares de Google News, no oficiales ni garantizados. Para decisiones
+        importantes, confirmá siempre en IOL, Bullmarket o BingX.
       </p>
     </div>
   `;
