@@ -34,10 +34,15 @@
   button { font-family:inherit; cursor:pointer; }
   input, select, textarea { font-family:inherit; background:#152922; color:#EAF3EE; }
   input::placeholder, textarea::placeholder { color:#5C7268; }
+  input[type=range] { -webkit-appearance:none; appearance:none; width:100%; height:4px; border-radius:2px; background:#1E362E; outline:none; margin:6px 0 2px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:18px; height:18px; border-radius:50%; background:#1FD693; cursor:pointer; border:2px solid #0A1512; }
+  input[type=range]::-moz-range-thumb { width:18px; height:18px; border-radius:50%; background:#1FD693; cursor:pointer; border:2px solid #0A1512; }
   #root { max-width:1100px; margin:0 auto; padding:1.5rem 1.5rem 3rem; }
   @media (max-width: 700px) { #root { padding:1.25rem 1rem 3rem; } }
   @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
   .tab-fade { animation: fadeIn 0.25s ease; }
+  @keyframes glowPulse { 0%, 100% { text-shadow: 0 0 0px rgba(31,214,147,0); } 50% { text-shadow: 0 0 20px rgba(31,214,147,0.65); } }
+  .record-glow { animation: glowPulse 1.8s ease-in-out 3; }
   .home-grid { display:grid; grid-template-columns: 1fr; gap:16px; align-items:start; }
   @media (min-width: 900px) { .home-grid { grid-template-columns: 2.1fr 1fr; } }
   .donut-row { display:flex; flex-direction:column; gap:16px; }
@@ -178,6 +183,28 @@ function DonutChart({ data, height, onSliceClick }) {
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
   return html`<div style=${{ position:'relative', height: height || 240 }}><canvas ref=${canvasRef} style=${{ cursor: onSliceClick ? 'pointer' : 'default' }}></canvas></div>`;
+}
+
+function Sparkline({ points }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  const subiendo = points.length > 1 && points[points.length-1] >= points[0];
+  useEffect(() => {
+    if (!canvasRef.current || points.length < 2) return;
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
+      type: 'line',
+      data: { labels: points.map((_,i)=>i), datasets: [{ data: points, borderColor: subiendo ? C.accent : C.danger, borderWidth:1.5, pointRadius:0, tension:0.3, fill:false }] },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        scales: { x:{ display:false }, y:{ display:false } },
+        plugins: { legend:{ display:false }, tooltip:{ enabled:false } },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [JSON.stringify(points)]);
+  if (points.length < 2) return null;
+  return html`<div style=${{ width:56, height:24, flexShrink:0 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
 function ComparisonChart({ data }) {
@@ -643,36 +670,30 @@ function ProjectionCard({ startValue, defaultRate, defaultInflacion }) {
         Si seguís aportando y tu cartera mantiene el ritmo que asumas acá — es una simulación, no una promesa.
         ${verAjustado ? ' En "Ajustado", los pesos futuros se descuentan por la inflación asumida, para verlos en poder de compra de hoy.' : ''}
       </p>
-      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:4 }}>
-        <label style=${{ fontSize:12, color:C.inkSoft }}>Aporte mensual (ARS)
-          <input type="number" step="any" value=${aporte} onChange=${e=>setAporte(parseFloat(e.target.value)||0)}
-            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
-        </label>
-        <label style=${{ fontSize:12, color:C.inkSoft }}>Hace cuántos meses invertís
-          <input type="number" step="1" min="1" value=${mesesInvirtiendo} onChange=${e=>setMesesInvirtiendo(parseInt(e.target.value)||1)}
-            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
-        </label>
-      </div>
-      <div style=${{ marginBottom:8 }}>
-        <label style=${{ fontSize:12, color:C.inkSoft }}>Tasa anual asumida (%)
-          <input type="number" step="any" value=${tasaAnual} onChange=${e=>setTasaAnual(parseFloat(e.target.value)||0)}
-            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
-        </label>
-        <p style=${{ fontSize:11, color:C.inkFaint, margin:'6px 0 0' }}>
-          Con ${mesesInvirtiendo} meses y tu rendimiento acumulado, eso anualizado da <strong className="mono" style=${{ color:C.inkSoft }}>${tasaSugerida}%</strong>.
-          ${Math.abs(tasaSugerida - tasaAnual) > 0.1 ? html` <button onClick=${()=>setTasaAnual(tasaSugerida)} style=${{ border:'none', background:'none', color:C.accent, fontSize:11, textDecoration:'underline', padding:0 }}>usar este valor</button>` : ''}
-        </p>
-      </div>
-      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
-        <label style=${{ fontSize:12, color:C.inkSoft }}>Años
-          <input type="number" step="1" min="1" value=${plazo} onChange=${e=>setPlazo(parseInt(e.target.value)||1)}
-            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
-        </label>
-        <label style=${{ fontSize:12, color:C.inkSoft }}>Inflación anual asumida (%)
-          <input type="number" step="any" value=${inflacionAnual} onChange=${e=>setInflacionAnual(parseFloat(e.target.value)||0)}
-            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
-        </label>
-      </div>
+      <label style=${{ fontSize:12, color:C.inkSoft, display:'block', marginBottom:6 }}>
+        Aporte mensual: <strong className="mono" style=${{ color:C.ink }}>${fmtARS(aporte)}</strong>
+        <input type="range" min="0" max="2000000" step="10000" value=${aporte} onChange=${e=>setAporte(parseFloat(e.target.value))} />
+      </label>
+      <label style=${{ fontSize:12, color:C.inkSoft, display:'block', marginBottom:6 }}>
+        Hace cuántos meses invertís: <strong className="mono" style=${{ color:C.ink }}>${mesesInvirtiendo}</strong>
+        <input type="range" min="1" max="120" step="1" value=${mesesInvirtiendo} onChange=${e=>setMesesInvirtiendo(parseInt(e.target.value))} />
+      </label>
+      <label style=${{ fontSize:12, color:C.inkSoft, display:'block', marginBottom:2 }}>
+        Tasa anual asumida: <strong className="mono" style=${{ color:C.ink }}>${tasaAnual}%</strong>
+        <input type="range" min="-20" max="80" step="0.5" value=${tasaAnual} onChange=${e=>setTasaAnual(parseFloat(e.target.value))} />
+      </label>
+      <p style=${{ fontSize:11, color:C.inkFaint, margin:'0 0 14px' }}>
+        Con ${mesesInvirtiendo} meses y tu rendimiento acumulado, eso anualizado da <strong className="mono" style=${{ color:C.inkSoft }}>${tasaSugerida}%</strong>.
+        ${Math.abs(tasaSugerida - tasaAnual) > 0.1 ? html` <button onClick=${()=>setTasaAnual(tasaSugerida)} style=${{ border:'none', background:'none', color:C.accent, fontSize:11, textDecoration:'underline', padding:0 }}>usar este valor</button>` : ''}
+      </p>
+      <label style=${{ fontSize:12, color:C.inkSoft, display:'block', marginBottom:6 }}>
+        Años: <strong className="mono" style=${{ color:C.ink }}>${plazo}</strong>
+        <input type="range" min="1" max="40" step="1" value=${plazo} onChange=${e=>setPlazo(parseInt(e.target.value))} />
+      </label>
+      <label style=${{ fontSize:12, color:C.inkSoft, display:'block', marginBottom:14 }}>
+        Inflación anual asumida: <strong className="mono" style=${{ color:C.ink }}>${inflacionAnual}%</strong>
+        <input type="range" min="0" max="150" step="1" value=${inflacionAnual} onChange=${e=>setInflacionAnual(parseFloat(e.target.value))} />
+      </label>
       <${ProjectionLine} points=${points} ajustado=${verAjustado} />
       <p className="mono" style=${{ fontSize:13, color:C.accent, margin:'10px 0 0', textAlign:'right' }}>
         Año ${plazo}: ${fmtARS(verAjustado ? final.valueReal : final.value)}
@@ -756,6 +777,13 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
     platformPieData.map(d => ({ ...d, montoDisplay: fmtMasked(d.monto) }))
   , [platformPieData, showUSD, usdArs, hideAmounts]);
   const totalValueAnimado = useCountUp(totalValue);
+  const esNuevoMaximo = useMemo(() => {
+    if (!history || history.length < 2) return false;
+    const today = new Date().toISOString().slice(0,10);
+    const anteriores = history.filter(h => h.date !== today).map(h => h.value);
+    if (anteriores.length === 0) return false;
+    return totalValue > Math.max(...anteriores);
+  }, [history, totalValue]);
   const [activoSeleccionado, setActivoSeleccionado] = useState(null);
   const posicionesSeleccionadas = useMemo(() =>
     activoSeleccionado ? (withDerived||[]).filter(p => norm(p.name) === norm(activoSeleccionado)) : []
@@ -772,7 +800,8 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
                 <button onClick=${()=>setHideAmounts(!hideAmounts)} title=${hideAmounts ? 'Mostrar montos' : 'Ocultar montos'}
                   style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:0, lineHeight:1 }}>${hideAmounts ? '🙈' : '👁'}</button>
               </div>
-              <p className="serif" style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValueAnimado)}</p>
+              <p className=${`serif${esNuevoMaximo ? ' record-glow' : ''}`} style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValueAnimado)}</p>
+              ${esNuevoMaximo && !hideAmounts && html`<p style=${{ fontSize:11, color:C.accent, margin:'2px 0 0', fontWeight:500 }}>✦ Nuevo máximo</p>`}
               <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmtMasked(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
             </div>
             ${!modoPresentacion && html`
@@ -909,7 +938,7 @@ function ChatIA({ contexto }) {
 function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
   comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice,
   showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
-  aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion,
+  aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion, history,
   diario, addEntradaDiario, removeEntradaDiario, metas, addMeta, removeMeta }) {
 
   const [aporteMonto, setAporteMonto] = useState('');
@@ -918,6 +947,21 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
     if (!(monto > 0)) return null;
     return computeRebalance(targets, actualValueByName, totalValue, monto);
   }, [aporteMonto, targets, actualValueByName, totalValue]);
+
+  const priceTrends = useMemo(() => {
+    const byName = {};
+    (history || []).slice().sort((a,b) => a.date.localeCompare(b.date)).forEach(h => {
+      if (!h.precios) return;
+      Object.entries(h.precios).forEach(([nname, precio]) => {
+        if (typeof precio !== 'number') return;
+        if (!byName[nname]) byName[nname] = [];
+        byName[nname].push(precio);
+      });
+    });
+    const map = {};
+    Object.keys(byName).forEach(k => { map[k] = byName[k].slice(-14); });
+    return map;
+  }, [history]);
 
   const contextoIA = useMemo(() => {
     const totalInvertido = withDerived.reduce((s,p) => s + p.invested, 0);
@@ -997,6 +1041,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
                   <p style=${{ fontSize:14, fontWeight:500, margin:0 }}>${p.name}</p>
                   <span style=${{ fontSize:11, color:C.inkFaint, margin:0 }}>${p.platform}</span>
                 </div>
+                <${Sparkline} points=${priceTrends[norm(p.name)] || []} />
               </div>
               ${!modoPresentacion && html`<button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>`}
             </div>
@@ -1442,14 +1487,16 @@ function App({ user }) {
   useEffect(() => {
     if (positions.length === 0) return;
     const today = new Date().toISOString().slice(0,10);
+    const precios = {};
+    positions.forEach(p => { precios[norm(p.name)] = p.currentPrice; });
     setHistory(prev => {
       const idx = prev.findIndex(h => h.date === today);
-      const entry = { date: today, value: Math.round(totalValue), invested: Math.round(totalInvested) };
+      const entry = { date: today, value: Math.round(totalValue), invested: Math.round(totalInvested), precios };
       if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
       return [...prev, entry];
     });
     // eslint-disable-next-line
-  }, [totalValue, totalInvested]);
+  }, [totalValue, totalInvested, positions]);
 
   const dayChange = useMemo(() => {
     if (history.length < 2) return null;
@@ -1562,7 +1609,7 @@ function App({ user }) {
           showBulkUpdate=${showBulkUpdate} setShowBulkUpdate=${setShowBulkUpdate} bulkUpdatePrices=${bulkUpdatePrices}
           fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
           aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
-          totalValue=${totalValue} actualValueByName=${actualValueByName} modoPresentacion=${modoPresentacion}
+          totalValue=${totalValue} actualValueByName=${actualValueByName} modoPresentacion=${modoPresentacion} history=${history}
           diario=${diario} addEntradaDiario=${addEntradaDiario} removeEntradaDiario=${removeEntradaDiario}
           metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta}
         />`}
