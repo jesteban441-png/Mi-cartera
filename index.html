@@ -109,12 +109,29 @@ function loadLS(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch(e) { return fallback; }
 }
 function saveLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {} }
+// Normaliza nombres para comparar/matchear sin que un espacio de más o una mayúscula
+// distinta rompan la conexión entre posiciones, objetivos y precios.
+function norm(s) { return (s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function displayCat(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+// Ajusta un monto de una fecha vieja a "pesos de hoy", componiendo la inflación mensual
+// (BCRA) entre esa fecha y el mes más reciente disponible.
+function valorAjustadoHoy(fecha, valor, mensual) {
+  if (!mensual || mensual.length === 0) return valor;
+  const desde = (fecha || '').slice(0,7);
+  let factor = 1;
+  mensual.forEach(m => {
+    const mk = (m.fecha || '').slice(0,7);
+    if (mk > desde) factor *= (1 + (Number(m.valor) || 0) / 100);
+  });
+  return valor * factor;
+}
 
 function computeRebalance(targets, actualValueByName, totalValue, aporte) {
   const newTotal = totalValue + aporte;
   const gaps = targets.map(t => {
     const idealValue = newTotal * t.target / 100;
-    const currentValue = actualValueByName[t.name] || 0;
+    const currentValue = actualValueByName[norm(t.name)] || 0;
     return { name: t.name, gap: Math.max(0, idealValue - currentValue) };
   });
   const totalGap = gaps.reduce((s,g) => s + g.gap, 0);
@@ -206,29 +223,35 @@ function EvolutionChart({ history }) {
   return html`<div style=${{ position:'relative', height:220 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
-function ProjectionLine({ points }) {
+function ProjectionLine({ points, ajustado }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   useEffect(() => {
     if (!canvasRef.current) return;
     if (chartRef.current) chartRef.current.destroy();
+    const valKey = ajustado ? 'valueReal' : 'value';
+    const ahorroKey = ajustado ? 'ahorroReal' : 'ahorro';
     chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
       type: 'line',
       data: {
         labels: points.map(p => `Año ${p.year}`),
         datasets: [
-          { label:'Proyección', data: points.map(p=>p.value), borderColor:C.accent, backgroundColor:'rgba(31,214,147,0.12)', fill:true, tension:0.35, pointRadius:0 },
-          { label:'Solo ahorrando', data: points.map(p=>p.ahorro), borderColor:'rgba(234,243,238,0.35)', backgroundColor:'transparent', borderDash:[4,4], fill:false, tension:0, pointRadius:0, borderWidth:1.5 },
+          { label:'Proyección', data: points.map(p=>p[valKey]), borderColor:C.accent, backgroundColor:'rgba(31,214,147,0.12)', fill:true, tension:0.35, pointRadius:0 },
+          { label:'Solo ahorrando', data: points.map(p=>p[ahorroKey]), borderColor:'rgba(234,243,238,0.35)', backgroundColor:'transparent', borderDash:[4,4], fill:false, tension:0, pointRadius:0, borderWidth:1.5 },
         ],
       },
       options: {
         responsive:true, maintainAspectRatio:false,
+        interaction: { mode:'index', intersect:false },
         scales: { y:{ ticks:{ color:C.inkSoft, callback: v => fmtARS(v) }, grid:{ color:C.border } }, x:{ ticks:{ color:C.inkSoft }, grid:{ display:false } } },
-        plugins: { legend:{ display:true, position:'top', labels:{ color:C.inkFaint, boxWidth:10, font:{ size:11 } } } },
+        plugins: {
+          legend:{ display:true, position:'top', labels:{ color:C.inkFaint, boxWidth:10, font:{ size:11 } } },
+          tooltip:{ callbacks:{ label: c => `${c.dataset.label}: ${fmtARS(c.parsed.y)}` } },
+        },
       },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [JSON.stringify(points)]);
+  }, [JSON.stringify(points), ajustado]);
   return html`<div style=${{ position:'relative', height:220 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
@@ -353,6 +376,7 @@ function BulkUpdateForm({ onApply, onClose }) {
 
 function AddPositionForm({ targets, onAdd, onCancel }) {
   const [name, setName] = useState(''); const [platform, setPlatform] = useState(PLATFORMS[0]);
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
   const [units, setUnits] = useState(''); const [avgPrice, setAvgPrice] = useState(''); const [currentPrice, setCurrentPrice] = useState(''); const [error, setError] = useState('');
   function submit() {
     const u = parseFloat(units), a = parseFloat(avgPrice), c = parseFloat(currentPrice);
@@ -360,7 +384,7 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
     if (!(u > 0)) return setError('Las unidades tienen que ser mayores a 0');
     if (!(a > 0)) return setError('El precio de compra tiene que ser mayor a 0');
     if (!(c > 0)) return setError('El precio actual tiene que ser mayor a 0');
-    setError(''); onAdd({ name:name.trim(), platform, units:u, avgPrice:a, currentPrice:c });
+    setError(''); onAdd({ name:name.trim(), platform, fecha, units:u, avgPrice:a, currentPrice:c });
   }
   const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
   const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
@@ -370,9 +394,12 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
         <input style=${inputStyle} list="target-names" value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: SPY" />
         <datalist id="target-names">${targets.map(t=>html`<option key=${t.id} value=${t.name} />`)}</datalist>
       </label>
-      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Plataforma
-        <select style=${inputStyle} value=${platform} onChange=${e=>setPlatform(e.target.value)}>${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}</select>
-      </label>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
+        <label style=${labelStyle}>Plataforma
+          <select style=${inputStyle} value=${platform} onChange=${e=>setPlatform(e.target.value)}>${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}</select>
+        </label>
+        <label style=${labelStyle}>Fecha de compra<input style=${inputStyle} type="date" value=${fecha} onChange=${e=>setFecha(e.target.value)} /></label>
+      </div>
       <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
         <label style=${labelStyle}>Unidades<input style=${inputStyle} type="number" step="any" value=${units} onChange=${e=>setUnits(e.target.value)} /></label>
         <label style=${labelStyle}>Precio compra (ARS)<input style=${inputStyle} type="number" step="any" value=${avgPrice} onChange=${e=>setAvgPrice(e.target.value)} /></label>
@@ -455,31 +482,47 @@ function NewsPanel() {
   `;
 }
 
-function ProjectionCard({ startValue, defaultRate }) {
+function ProjectionCard({ startValue, defaultRate, defaultInflacion }) {
   const [aporte, setAporte] = useState(150000);
   const [tasaAnual, setTasaAnual] = useState(() => { const r = Math.round((defaultRate||0)*10)/10; return r > 0 ? r : 12; });
   const [plazo, setPlazo] = useState(10);
+  const [inflacionAnual, setInflacionAnual] = useState(() => { const r = Math.round((defaultInflacion||0)*10)/10; return r > 0 ? r : 30; });
+  const [verAjustado, setVerAjustado] = useState(false);
   const points = useMemo(() => {
     const anios = Math.max(1, Math.round(plazo) || 1);
     const rMensual = Math.pow(1 + tasaAnual/100, 1/12) - 1;
+    const infMensual = Math.pow(1 + inflacionAnual/100, 1/12) - 1;
     const pts = [];
     let v = startValue;
     let ahorro = startValue;
+    let factorInf = 1;
     for (let m = 0; m <= anios*12; m++) {
-      if (m % 12 === 0) pts.push({ year: m/12, value: Math.round(v), ahorro: Math.round(ahorro) });
+      if (m % 12 === 0) pts.push({
+        year: m/12,
+        value: Math.round(v), ahorro: Math.round(ahorro),
+        valueReal: Math.round(v / factorInf), ahorroReal: Math.round(ahorro / factorInf),
+      });
       v = v*(1+rMensual) + (aporte || 0);
       ahorro = ahorro + (aporte || 0);
+      factorInf *= (1 + infMensual);
     }
     return pts;
-  }, [startValue, aporte, tasaAnual, plazo]);
+  }, [startValue, aporte, tasaAnual, plazo, inflacionAnual]);
   const final = points[points.length-1];
   return html`
     <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Proyección a futuro</p>
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4, gap:8, flexWrap:'wrap' }}>
+        <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Proyección a futuro</p>
+        <div style=${{ display:'flex', background:C.bg, borderRadius:7, padding:2 }}>
+          <button onClick=${()=>setVerAjustado(false)} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: !verAjustado?C.surfaceAlt:'transparent', color: !verAjustado?C.ink:C.inkSoft }}>Nominal</button>
+          <button onClick=${()=>setVerAjustado(true)} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: verAjustado?C.surfaceAlt:'transparent', color: verAjustado?C.ink:C.inkSoft }}>Ajustado</button>
+        </div>
+      </div>
       <p style=${{ fontSize:12, color:C.inkFaint, margin:'0 0 12px', lineHeight:1.5 }}>
         Si seguís aportando y tu cartera mantiene el ritmo que asumas acá — es una simulación, no una promesa.
+        ${verAjustado ? ' En "Ajustado", los pesos futuros se descuentan por la inflación asumida, para verlos en poder de compra de hoy.' : ''}
       </p>
-      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8 }}>
         <label style=${{ fontSize:12, color:C.inkSoft }}>Aporte mensual (ARS)
           <input type="number" step="any" value=${aporte} onChange=${e=>setAporte(parseFloat(e.target.value)||0)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
@@ -488,21 +531,39 @@ function ProjectionCard({ startValue, defaultRate }) {
           <input type="number" step="any" value=${tasaAnual} onChange=${e=>setTasaAnual(parseFloat(e.target.value)||0)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
         </label>
+      </div>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
         <label style=${{ fontSize:12, color:C.inkSoft }}>Años
           <input type="number" step="1" min="1" value=${plazo} onChange=${e=>setPlazo(parseInt(e.target.value)||1)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
         </label>
+        <label style=${{ fontSize:12, color:C.inkSoft }}>Inflación anual asumida (%)
+          <input type="number" step="any" value=${inflacionAnual} onChange=${e=>setInflacionAnual(parseFloat(e.target.value)||0)}
+            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
+        </label>
       </div>
-      <${ProjectionLine} points=${points} />
-      <p className="mono" style=${{ fontSize:13, color:C.accent, margin:'10px 0 0', textAlign:'right' }}>Año ${plazo}: ${fmtARS(final.value)}</p>
+      <${ProjectionLine} points=${points} ajustado=${verAjustado} />
+      <p className="mono" style=${{ fontSize:13, color:C.accent, margin:'10px 0 0', textAlign:'right' }}>
+        Año ${plazo}: ${fmtARS(verAjustado ? final.valueReal : final.value)}
+      </p>
     </div>
   `;
 }
 
 /* ---------- pestañas ---------- */
-function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, onExport, onImportClick }) {
+function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
   const accentColor = (dayChange != null && dayChange < 0) ? '#5B9E82' : C.accent;
+  const [verAjustado, setVerAjustado] = useState(false);
+  const hayInflacion = inflacionMensual && inflacionMensual.length > 0;
+  const historyMostrado = useMemo(() => {
+    if (!verAjustado || !hayInflacion) return history;
+    return history.map(h => ({
+      date: h.date,
+      value: Math.round(valorAjustadoHoy(h.date, h.value, inflacionMensual)),
+      invested: Math.round(valorAjustadoHoy(h.date, h.invested, inflacionMensual)),
+    }));
+  }, [history, verAjustado, hayInflacion, inflacionMensual]);
   return html`
     <div className="home-grid">
       <div>
@@ -542,13 +603,20 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
         </div>
 
         <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Cartera vs. ahorro sin invertir</p>
+          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
+            <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Cartera vs. ahorro sin invertir</p>
+            <div style=${{ display:'flex', background:C.bg, borderRadius:7, padding:2 }}>
+              <button onClick=${()=>setVerAjustado(false)} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: !verAjustado?C.surfaceAlt:'transparent', color: !verAjustado?C.ink:C.inkSoft }}>Nominal</button>
+              <button onClick=${()=>setVerAjustado(true)} disabled=${!hayInflacion} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: verAjustado?C.surfaceAlt:'transparent', color: verAjustado?C.ink:C.inkSoft }}>Ajustado</button>
+            </div>
+          </div>
           ${history.length < 2
             ? html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Se va armando solo, un punto por día que abrís la app.</p>`
-            : html`<${EvolutionChart} history=${history} />`}
+            : html`<${EvolutionChart} history=${historyMostrado} />`}
+          ${verAjustado && html`<p style=${{ fontSize:11, color:C.inkFaint, margin:'8px 0 0', lineHeight:1.5 }}>Montos viejos llevados a poder de compra de hoy, usando el IPC del BCRA.</p>`}
         </div>
 
-        <${ProjectionCard} startValue=${totalValue} defaultRate=${totalPLPct} />
+        <${ProjectionCard} startValue=${totalValue} defaultRate=${totalPLPct} defaultInflacion=${inflacionAnualizada} />
       </div>
 
       <${NewsPanel} />
@@ -631,7 +699,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
               </div>
               <button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>
             </div>
-            <div className="mono" style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}</div>
+            <div className="mono" style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}${p.fecha ? ' · ' + p.fecha : ''}</div>
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <label style=${{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
                 Precio actual
@@ -774,7 +842,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
     const map = {};
     movimientos.filter(m => m.tipo==='gasto' && monthKeyOf(m.fecha)===monthKey).forEach(m => { map[m.categoria] = (map[m.categoria]||0) + m.monto; });
     const total = Object.values(map).reduce((s,v)=>s+v,0);
-    return Object.entries(map).map(([name,val],i) => ({ name, value: total ? Math.round(val/total*1000)/10 : 0, colorIndex:i }))
+    return Object.entries(map).map(([name,val],i) => ({ name: displayCat(name), value: total ? Math.round(val/total*1000)/10 : 0, colorIndex:i }))
       .filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
   }, [movimientos, monthKey]);
 
@@ -839,7 +907,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
         ${movimientosDelMes.map(m => html`
           <div key=${m.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 0', borderTop:`0.5px solid ${C.border}` }}>
             <div>
-              <p style=${{ fontSize:13.5, margin:0 }}>${m.categoria}</p>
+              <p style=${{ fontSize:13.5, margin:0 }}>${displayCat(m.categoria)}</p>
               <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso' ? 'Ingreso' : 'Gasto'} · ${m.fecha}</span>
             </div>
             <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
@@ -869,6 +937,8 @@ function App({ user }) {
   const [liveLoading, setLiveLoading] = useState(false);
   const [usdArs, setUsdArs] = useState(null);
   const [showUSD, setShowUSD] = useState(false);
+  const [inflacionMensual, setInflacionMensual] = useState([]);
+  const [inflacionAnualizada, setInflacionAnualizada] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [frase] = useState(() => FRASES[Math.floor(Math.random()*FRASES.length)]);
   const fileInputRef = useRef(null);
@@ -926,7 +996,7 @@ function App({ user }) {
     const trimmed = (newName || '').trim();
     if (!old || !trimmed || trimmed === old.name) return;
     setTargets(targets.map(t => t.id === id ? { ...t, name: trimmed } : t));
-    setPositions(positions.map(p => p.name === old.name ? { ...p, name: trimmed } : p));
+    setPositions(positions.map(p => norm(p.name) === norm(old.name) ? { ...p, name: trimmed } : p));
   }
 
   function addPosition(p) { setPositions([...positions, { ...p, id:'p'+Date.now() }]); setShowAddPosition(false); }
@@ -936,10 +1006,10 @@ function App({ user }) {
   function addAporte(a) { setAportes([...aportes, { ...a, id:'a'+Date.now() }]); }
   function removeAporte(id) { setAportes(aportes.filter(a => a.id !== id)); }
 
-  function addMovimiento(m) { setMovimientos([...movimientos, { ...m, id:'m'+Date.now() }]); }
+  function addMovimiento(m) { setMovimientos([...movimientos, { ...m, categoria: norm(m.categoria), id:'m'+Date.now() }]); }
   function removeMovimiento(id) { setMovimientos(movimientos.filter(m => m.id !== id)); }
   function bulkAddMovimientos(nuevos) {
-    setMovimientos([...movimientos, ...nuevos.map((n,i) => ({ ...n, id:'m'+Date.now()+'-'+i }))]);
+    setMovimientos([...movimientos, ...nuevos.map((n,i) => ({ ...n, categoria: norm(n.categoria), id:'m'+Date.now()+'-'+i }))]);
   }
 
   function bulkUpdatePrices(text) {
@@ -951,7 +1021,7 @@ function App({ user }) {
       if (!m) { unmatched.push(line); return; }
       const rawName = m[1].trim();
       const price = parseFloat(m[2].replace(',', '.'));
-      const idx = updated.findIndex(p => p.name.toLowerCase() === rawName.toLowerCase());
+      const idx = updated.findIndex(p => norm(p.name) === norm(rawName));
       if (idx >= 0 && price > 0) { updated[idx].currentPrice = price; matched++; }
       else unmatched.push(line);
     });
@@ -967,8 +1037,10 @@ function App({ user }) {
       const data = await r.json();
       if (!data.ok) { setLiveStatus('Error del servidor: ' + data.error); setLiveLoading(false); return; }
       let updated = 0;
+      const normPrices = {};
+      Object.keys(data.prices || {}).forEach(k => { normPrices[norm(k)] = data.prices[k]; });
       setPositions(prev => prev.map(p => {
-        const price = data.prices[p.name];
+        const price = normPrices[norm(p.name)];
         if (price) { updated++; return { ...p, currentPrice: price }; }
         return p;
       }));
@@ -985,6 +1057,14 @@ function App({ user }) {
 
   useEffect(() => {
     if (loaded && positions.length > 0) fetchLivePrices();
+    // eslint-disable-next-line
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    fetch('/api/inflacion').then(r => r.json()).then(data => {
+      if (data.ok) { setInflacionMensual(data.mensual || []); setInflacionAnualizada(data.anualizada); }
+    }).catch(() => {});
     // eslint-disable-next-line
   }, [loaded]);
 
@@ -1018,23 +1098,23 @@ function App({ user }) {
 
   const actualValueByName = useMemo(() => {
     const map = {};
-    targets.forEach(t => { map[t.name] = withDerived.filter(p => p.name === t.name).reduce((s,p) => s + p.value, 0); });
+    targets.forEach(t => { map[norm(t.name)] = withDerived.filter(p => norm(p.name) === norm(t.name)).reduce((s,p) => s + p.value, 0); });
     return map;
   }, [targets, withDerived]);
 
   const comparisonData = useMemo(() => {
     const rows = targets.map(t => {
-      const val = actualValueByName[t.name] || 0;
+      const val = actualValueByName[norm(t.name)] || 0;
       return { name: t.name, Objetivo: t.target, Actual: totalValue ? Math.round(val/totalValue*1000)/10 : 0, _val: val };
     });
-    const matchedNames = new Set(targets.map(t => t.name));
-    const otrosVal = withDerived.filter(p => !matchedNames.has(p.name)).reduce((s,p) => s + p.value, 0);
+    const matchedNames = new Set(targets.map(t => norm(t.name)));
+    const otrosVal = withDerived.filter(p => !matchedNames.has(norm(p.name))).reduce((s,p) => s + p.value, 0);
     if (otrosVal > 0) rows.push({ name:'Otros', Objetivo:0, Actual: totalValue ? Math.round(otrosVal/totalValue*1000)/10 : 0, _val:otrosVal });
     return rows.sort((a,b) => b._val - a._val);
   }, [targets, withDerived, totalValue, actualValueByName]);
 
   const assetPieData = useMemo(() => {
-    return targets.map((t,i) => ({ name:t.name, value: Math.round((actualValueByName[t.name]||0) / (totalValue||1) * 1000) / 10, colorIndex:i }))
+    return targets.map((t,i) => ({ name:t.name, value: Math.round((actualValueByName[norm(t.name)]||0) / (totalValue||1) * 1000) / 10, colorIndex:i }))
       .filter(d => d.value > 0)
       .sort((a,b) => b.value - a.value);
   }, [targets, actualValueByName, totalValue]);
@@ -1103,6 +1183,7 @@ function App({ user }) {
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
           assetPieData=${assetPieData} platformPieData=${platformPieData} history=${history} lastUpdated=${lastUpdated}
           usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
+          inflacionMensual=${inflacionMensual} inflacionAnualizada=${inflacionAnualizada}
           onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
         />`}
 
