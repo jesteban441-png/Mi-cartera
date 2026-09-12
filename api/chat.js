@@ -27,6 +27,7 @@ Reglas estrictas, no las rompas:
 - Cuando haya más de una forma válida de verlo, mostrá más de una — no des un solo veredicto como si fuera la única verdad posible.
 - Mencioná, con naturalidad y sin sonar repetitivo, que esto es educativo y no asesoramiento financiero regulado.
 - Respondé corto (se lee en un celular): párrafos cortos, sin relleno.
+- No uses formato markdown (nada de **negrita**, #, guiones de lista ni asteriscos) — el chat solo muestra texto plano. Para separar ideas, usá renglones aparte o números simples ("1)", "2)").
 - Español rioplatense.
 
 Datos actuales de la cartera:
@@ -45,7 +46,7 @@ ${JSON.stringify(contexto || {}, null, 2)}`;
       body: JSON.stringify({
         contents,
         systemInstruction: { parts: [{ text: systemInstruction }] },
-        generationConfig: { temperature: 0.6, maxOutputTokens: 700 },
+        generationConfig: { temperature: 0.6, maxOutputTokens: 2000 },
       }),
     });
 
@@ -57,8 +58,9 @@ ${JSON.stringify(contexto || {}, null, 2)}`;
     const texto = (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts || [])
       .map(p => p.text || '').join('');
     if (!texto) throw new Error('Gemini no devolvió texto (puede haber bloqueado la respuesta por sus filtros de seguridad).');
+    const cortada = data && data.candidates && data.candidates[0] && data.candidates[0].finishReason === 'MAX_TOKENS';
 
-    res.status(200).json({ ok: true, respuesta: texto });
+    res.status(200).json({ ok: true, respuesta: texto + (cortada ? '\n\n(se cortó por longitud — pedile que siga o que resuma)' : '') });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e) });
   }
