@@ -271,7 +271,10 @@ function LegendList({ data }) {
             <span style=${{ width:9, height:9, borderRadius:2, background:colorFor(d.colorIndex ?? i), flexShrink:0 }}></span>
             ${d.name}
           </span>
-          <strong className="mono" style=${{ fontWeight:500, color:C.inkSoft }}>${d.value}%</strong>
+          <span style=${{ textAlign:'right' }}>
+            ${d.montoDisplay ? html`<span className="mono" style=${{ fontSize:11, color:C.inkFaint, display:'block' }}>${d.montoDisplay}</span>` : ''}
+            <strong className="mono" style=${{ fontWeight:500, color:C.inkSoft }}>${d.value}%</strong>
+          </span>
         </div>
       `)}
     </div>
@@ -578,8 +581,9 @@ function ProjectionCard({ startValue, defaultRate, defaultInflacion }) {
 }
 
 /* ---------- pestañas ---------- */
-function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
+function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, history, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
+  const fmtMasked = (n) => hideAmounts ? '•••••••' : fmt(n);
   const accentColor = (dayChange != null && dayChange < 0) ? '#5B9E82' : C.accent;
   const [verAjustado, setVerAjustado] = useState(false);
   const hayInflacion = inflacionMensual && inflacionMensual.length > 0;
@@ -591,6 +595,12 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
       invested: Math.round(valorAjustadoHoy(h.date, h.invested, inflacionMensual)),
     }));
   }, [history, verAjustado, hayInflacion, inflacionMensual]);
+  const assetLegendData = useMemo(() =>
+    assetPieData.map(d => ({ ...d, montoDisplay: fmtMasked(d.monto) }))
+  , [assetPieData, showUSD, usdArs, hideAmounts]);
+  const platformLegendData = useMemo(() =>
+    platformPieData.map(d => ({ ...d, montoDisplay: fmtMasked(d.monto) }))
+  , [platformPieData, showUSD, usdArs, hideAmounts]);
   return html`
     <div className="home-grid">
       <div>
@@ -598,9 +608,13 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
           <span style=${{ position:'absolute', right:-14, top:-38, fontSize:170, fontFamily:"'Fraunces',serif", color:accentColor, opacity:0.09, pointerEvents:'none', userSelect:'none' }}>$</span>
           <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', position:'relative' }}>
             <div>
-              <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'0 0 4px' }}>Valor total</p>
-              <p className="serif" style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmt(totalValue)}</p>
-              <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmt(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
+              <div style=${{ display:'flex', alignItems:'center', gap:8 }}>
+                <p style=${{ fontSize:12.5, color:C.inkSoft, margin:0 }}>Valor total</p>
+                <button onClick=${()=>setHideAmounts(!hideAmounts)} title=${hideAmounts ? 'Mostrar montos' : 'Ocultar montos'}
+                  style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:0, lineHeight:1 }}>${hideAmounts ? '🙈' : '👁'}</button>
+              </div>
+              <p className="serif" style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValue)}</p>
+              <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmtMasked(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
             </div>
             <div style=${{ display:'flex', gap:6 }}>
               <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
@@ -619,13 +633,13 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
             <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
             ${assetPieData.length === 0
               ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
-              : html`<${DonutChart} data=${assetPieData} height=${260} /><${LegendList} data=${assetPieData} />`}
+              : html`<${DonutChart} data=${assetPieData} height=${260} /><${LegendList} data=${assetLegendData} />`}
           </div>
           <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
             <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
             ${platformPieData.length === 0
               ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
-              : html`<${DonutChart} data=${platformPieData} height=${260} /><${LegendList} data=${platformPieData} />`}
+              : html`<${DonutChart} data=${platformPieData} height=${260} /><${LegendList} data=${platformLegendData} />`}
           </div>
         </div>
 
@@ -838,7 +852,10 @@ function BulkMovimientosForm({ onApply, onClose }) {
 }
 
 function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovimientos, aportes }) {
-  const [monthKey, setMonthKey] = useState(() => new Date().toISOString().slice(0,7));
+  const [monthKey, setMonthKey] = useState(() => {
+    const fechas = [...movimientos.map(m => m.fecha), ...aportes.map(a => a.fecha)].filter(Boolean).sort();
+    return fechas.length ? monthKeyOf(fechas[fechas.length - 1]) : new Date().toISOString().slice(0,7);
+  });
   const [showAdd, setShowAdd] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
 
@@ -869,7 +886,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
     const map = {};
     movimientos.filter(m => m.tipo==='gasto' && monthKeyOf(m.fecha)===monthKey).forEach(m => { map[m.categoria] = (map[m.categoria]||0) + m.monto; });
     const total = Object.values(map).reduce((s,v)=>s+v,0);
-    return Object.entries(map).map(([name,val],i) => ({ name: displayCat(name), value: total ? Math.round(val/total*1000)/10 : 0, colorIndex:i }))
+    return Object.entries(map).map(([name,val],i) => ({ name: displayCat(name), monto: val, montoDisplay: fmtARS(val), value: total ? Math.round(val/total*1000)/10 : 0, colorIndex:i }))
       .filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
   }, [movimientos, monthKey]);
 
@@ -878,6 +895,18 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
   , [movimientos, monthKey]);
 
   const aportesDelMes = useMemo(() => aportes.filter(a => monthKeyOf(a.fecha)===monthKey), [aportes, monthKey]);
+
+  const flujoPieData = useMemo(() => {
+    const items = [
+      { name:'Ingresos', monto: resumen.ingresosMes },
+      { name:'Gastos', monto: resumen.gastosMes },
+      { name:'Disponible', monto: resumen.disponible },
+    ];
+    const total = items.reduce((s,d) => s + Math.max(0, d.monto), 0);
+    return items
+      .map((d,i) => ({ ...d, value: total ? Math.round(Math.max(0,d.monto)/total*1000)/10 : 0, colorIndex:i, montoDisplay: fmtARS(d.monto) }))
+      .filter(d => d.monto > 0);
+  }, [resumen]);
 
   return html`
     <div className="gestion-wrap">
@@ -897,6 +926,14 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
           "Disponible" es acumulado: arrastra lo que sobró (o faltó) de meses anteriores, y ya descuenta lo invertido este mes.
         </p>
       </div>
+
+      ${flujoPieData.length > 0 && html`
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Ingresos, gastos y disponible</p>
+          <${DonutChart} data=${flujoPieData} />
+          <${LegendList} data=${flujoPieData} />
+        </div>
+      `}
 
       ${categoryPieData.length > 0 && html`
         <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
@@ -964,6 +1001,7 @@ function App({ user }) {
   const [liveLoading, setLiveLoading] = useState(false);
   const [usdArs, setUsdArs] = useState(null);
   const [showUSD, setShowUSD] = useState(false);
+  const [hideAmounts, setHideAmounts] = useState(() => loadLS('ocultar-montos', false));
   const [inflacionMensual, setInflacionMensual] = useState([]);
   const [inflacionAnualizada, setInflacionAnualizada] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -1013,6 +1051,8 @@ function App({ user }) {
   }, [targets, positions, aportes, movimientos, history, loaded]);
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
+
+  useEffect(() => { saveLS('ocultar-montos', hideAmounts); }, [hideAmounts]);
 
   function addTarget(t) { setTargets([...targets, { ...t, id:'c'+Date.now() }]); setShowAddTarget(false); }
   function removeTarget(id) { setTargets(targets.filter(t => t.id !== id)); }
@@ -1141,7 +1181,7 @@ function App({ user }) {
   }, [targets, withDerived, totalValue, actualValueByName]);
 
   const assetPieData = useMemo(() => {
-    return targets.map((t,i) => ({ name:t.name, value: Math.round((actualValueByName[norm(t.name)]||0) / (totalValue||1) * 1000) / 10, colorIndex:i }))
+    return targets.map((t,i) => ({ name:t.name, monto: actualValueByName[norm(t.name)]||0, value: Math.round((actualValueByName[norm(t.name)]||0) / (totalValue||1) * 1000) / 10, colorIndex:i }))
       .filter(d => d.value > 0)
       .sort((a,b) => b.value - a.value);
   }, [targets, actualValueByName, totalValue]);
@@ -1150,7 +1190,7 @@ function App({ user }) {
     const map = {};
     withDerived.forEach(p => { map[p.platform] = (map[p.platform]||0) + p.value; });
     return Object.entries(map).filter(([,v]) => v > 0).map(([plat,val],i) => ({
-      name: plat, value: Math.round(val/(totalValue||1)*1000)/10, colorIndex: i,
+      name: plat, monto: val, value: Math.round(val/(totalValue||1)*1000)/10, colorIndex: i,
     })).sort((a,b) => b.value - a.value);
   }, [withDerived, totalValue]);
 
@@ -1210,6 +1250,7 @@ function App({ user }) {
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
           assetPieData=${assetPieData} platformPieData=${platformPieData} history=${history} lastUpdated=${lastUpdated}
           usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
+          hideAmounts=${hideAmounts} setHideAmounts=${setHideAmounts}
           inflacionMensual=${inflacionMensual} inflacionAnualizada=${inflacionAnualizada}
           onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
         />`}
