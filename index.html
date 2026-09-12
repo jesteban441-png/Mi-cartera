@@ -482,6 +482,90 @@ function AportesLog({ aportes, addAporte, removeAporte, modoPresentacion }) {
   `;
 }
 
+function DiarioDecisiones({ entradas, addEntrada, removeEntrada, modoPresentacion }) {
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
+  const [texto, setTexto] = useState('');
+  function submit() {
+    const t = texto.trim();
+    if (!t) return;
+    addEntrada({ fecha, texto: t });
+    setTexto('');
+  }
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Diario de decisiones</p>
+      <p style=${{ fontSize:11.5, color:C.inkFaint, margin:'0 0 12px', lineHeight:1.5 }}>
+        Una nota de por qué hiciste algo — con el tiempo se te arma tu propio historial de criterio.
+      </p>
+      ${!modoPresentacion && html`
+        <div style=${{ marginBottom:14 }}>
+          <input type="date" value=${fecha} onChange=${e=>setFecha(e.target.value)}
+            style=${{ padding:'8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginBottom:8, display:'block' }} />
+          <textarea value=${texto} onChange=${e=>setTexto(e.target.value)} placeholder="Ej: compré más BTC porque bajó 15% y sigo el plan..."
+            style=${{ width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, minHeight:70, resize:'vertical', boxSizing:'border-box', marginBottom:8 }}></textarea>
+          <button onClick=${submit} style=${{ padding:'8px 16px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Guardar</button>
+        </div>
+      `}
+      ${entradas.length === 0
+        ? html`<p style=${{ fontSize:13, color:C.inkSoft }}>Todavía no escribiste nada.</p>`
+        : entradas.slice().reverse().map(e => html`
+          <div key=${e.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'10px 0' }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+              <span className="mono" style=${{ fontSize:11.5, color:C.inkFaint }}>${e.fecha}</span>
+              ${!modoPresentacion && html`<button onClick=${()=>removeEntrada(e.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:4 }}>✕</button>`}
+            </div>
+            <p style=${{ fontSize:13.5, margin:'4px 0 0', lineHeight:1.5, whiteSpace:'pre-wrap' }}>${e.texto}</p>
+          </div>
+        `)}
+    </div>
+  `;
+}
+
+function MetasCard({ metas, addMeta, removeMeta, totalValue, modoPresentacion }) {
+  const [nombre, setNombre] = useState('');
+  const [monto, setMonto] = useState('');
+  function submit() {
+    const m = parseFloat(monto);
+    if (!nombre.trim() || !(m > 0)) return;
+    addMeta({ nombre: nombre.trim(), monto: m });
+    setNombre(''); setMonto('');
+  }
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Metas propias</p>
+      ${!modoPresentacion && html`
+        <div style=${{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap' }}>
+          <input value=${nombre} onChange=${e=>setNombre(e.target.value)} placeholder="Ej: Auto, Independencia..."
+            style=${{ flex:1, minWidth:120, padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+          <input type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} placeholder="Monto (ARS)"
+            style=${{ width:130, padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 }} />
+          <button onClick=${submit} style=${{ padding:'8px 14px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>+</button>
+        </div>
+      `}
+      ${metas.length === 0
+        ? html`<p style=${{ fontSize:13, color:C.inkSoft }}>Todavía no definiste ninguna meta.</p>`
+        : metas.map(meta => {
+          const pct = meta.monto ? Math.min(100, Math.round(totalValue/meta.monto*1000)/10) : 0;
+          return html`
+            <div key=${meta.id} style=${{ marginBottom:16 }}>
+              <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:5, gap:8 }}>
+                <span style=${{ fontSize:13, fontWeight:500 }}>${meta.nombre}</span>
+                <span style=${{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span className="mono" style=${{ fontSize:11.5, color:C.inkSoft, whiteSpace:'nowrap' }}>${fmtARS(totalValue)} / ${fmtARS(meta.monto)}</span>
+                  ${!modoPresentacion && html`<button onClick=${()=>removeMeta(meta.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:0 }}>✕</button>`}
+                </span>
+              </div>
+              <div style=${{ height:8, background:C.bg, borderRadius:4, overflow:'hidden' }}>
+                <div style=${{ height:'100%', width: pct+'%', background: pct>=100 ? C.accent : C.btc, borderRadius:4, transition:'width 0.4s ease' }}></div>
+              </div>
+              <p className="mono" style=${{ fontSize:11, color:C.inkFaint, margin:'3px 0 0' }}>${pct}%</p>
+            </div>
+          `;
+        })}
+    </div>
+  `;
+}
+
 function NewsPanel() {
   const [items, setItems] = useState(null);
   const [error, setError] = useState(false);
@@ -620,6 +704,37 @@ function useCountUp(value, duration = 700) {
   return display;
 }
 
+function ThrowbackCard({ history, totalValue, fmtMasked }) {
+  const punto = useMemo(() => {
+    if (!history || history.length < 2) return null;
+    const sorted = [...history].sort((a,b) => a.date.localeCompare(b.date));
+    const hoy = new Date();
+    const objetivo = new Date(hoy); objetivo.setDate(objetivo.getDate() - 365);
+    const objetivoStr = objetivo.toISOString().slice(0,10);
+    let candidato = [...sorted].reverse().find(h => h.date <= objetivoStr);
+    if (!candidato) candidato = sorted[0];
+    if (candidato.date === sorted[sorted.length-1].date) return null;
+    const dias = Math.round((hoy - new Date(candidato.date + 'T00:00:00')) / (1000*60*60*24));
+    if (dias < 20) return null;
+    return { ...candidato, dias };
+  }, [history]);
+
+  if (!punto) return null;
+  const cambio = totalValue - punto.value;
+  const cambioPct = punto.value ? Math.round(cambio/punto.value*1000)/10 : 0;
+  const label = punto.dias >= 330 ? 'Hace un año' : punto.dias >= 50 ? `Hace ${Math.round(punto.dias/30)} meses` : `Hace ${punto.dias} días`;
+
+  return html`
+    <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1rem 1.25rem', marginBottom:16 }}>
+      <p style=${{ fontSize:12.5, color:C.inkSoft, margin:0, lineHeight:1.6 }}>
+        ${label} tenías <strong className="mono" style=${{ color:C.ink, fontWeight:500 }}>${fmtMasked(punto.value)}</strong> — ahora
+        <strong className="mono" style=${{ color: cambio>=0 ? C.accent : C.danger, fontWeight:500 }}> ${fmtMasked(totalValue)}</strong>
+        (${cambio>=0?'+':''}${cambioPct}%)
+      </p>
+    </div>
+  `;
+}
+
 function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, withDerived, history, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, modoPresentacion, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
   const fmtMasked = (n) => hideAmounts ? '•••••••' : fmt(n);
@@ -673,6 +788,8 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
             ${lastUpdated && html`<span className="mono" style=${{ fontSize:11, color:C.inkFaint, marginLeft:'auto' }}>Actualizado ${lastUpdated}</span>`}
           </div>
         </div>
+
+        <${ThrowbackCard} history=${history} totalValue=${totalValue} fmtMasked=${fmtMasked} />
 
         <div className="donut-row" style=${{ marginBottom:16 }}>
           <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
@@ -792,7 +909,8 @@ function ChatIA({ contexto }) {
 function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
   comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice,
   showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
-  aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion }) {
+  aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion,
+  diario, addEntradaDiario, removeEntradaDiario, metas, addMeta, removeMeta }) {
 
   const [aporteMonto, setAporteMonto] = useState('');
   const sugerencias = useMemo(() => {
@@ -903,6 +1021,10 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
       </div>
 
       <${AportesLog} aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte} modoPresentacion=${modoPresentacion} />
+
+      <${MetasCard} metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta} totalValue=${totalValue} modoPresentacion=${modoPresentacion} />
+
+      <${DiarioDecisiones} entradas=${diario} addEntrada=${addEntradaDiario} removeEntrada=${removeEntradaDiario} modoPresentacion=${modoPresentacion} />
     </div>
   `;
 }
@@ -1141,6 +1263,8 @@ function App({ user }) {
   const [positions, setPositions] = useState([]);
   const [aportes, setAportes] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
+  const [diario, setDiario] = useState([]);
+  const [metas, setMetas] = useState([]);
   const [history, setHistory] = useState([]);
   const [showAddTarget, setShowAddTarget] = useState(false);
   const [showAddPosition, setShowAddPosition] = useState(false);
@@ -1183,12 +1307,16 @@ function App({ user }) {
           setPositions(d.positions || []);
           setAportes(d.aportes || []);
           setMovimientos(d.movimientos || []);
+          setDiario(d.diario || []);
+          setMetas(d.metas || []);
           setHistory(d.history || []);
         } else {
           setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
           setPositions(loadLS('portfolio-posiciones', []));
           setAportes(loadLS('registro-aportes', []));
           setMovimientos(loadLS('registro-movimientos', []));
+          setDiario([]);
+          setMetas([]);
           setHistory(loadLS('historial-valor', []));
         }
       } catch (e) {
@@ -1204,11 +1332,11 @@ function App({ user }) {
     if (!loaded) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, movimientos, history }).catch((e) => {
+      setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, movimientos, diario, metas, history }).catch((e) => {
         setLiveStatus('No se pudo guardar en la nube: ' + e.message);
       });
     }, 800);
-  }, [targets, positions, aportes, movimientos, history, loaded]);
+  }, [targets, positions, aportes, movimientos, diario, metas, history, loaded]);
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
@@ -1238,6 +1366,12 @@ function App({ user }) {
   function bulkAddMovimientos(nuevos) {
     setMovimientos([...movimientos, ...nuevos.map((n,i) => ({ ...n, categoria: norm(n.categoria), id:'m'+Date.now()+'-'+i }))]);
   }
+
+  function addEntradaDiario(e) { setDiario([...diario, { ...e, id:'d'+Date.now() }]); }
+  function removeEntradaDiario(id) { setDiario(diario.filter(e => e.id !== id)); }
+
+  function addMeta(m) { setMetas([...metas, { ...m, id:'g'+Date.now() }]); }
+  function removeMeta(id) { setMetas(metas.filter(m => m.id !== id)); }
 
   function bulkUpdatePrices(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -1429,6 +1563,8 @@ function App({ user }) {
           fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
           aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
           totalValue=${totalValue} actualValueByName=${actualValueByName} modoPresentacion=${modoPresentacion}
+          diario=${diario} addEntradaDiario=${addEntradaDiario} removeEntradaDiario=${removeEntradaDiario}
+          metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta}
         />`}
 
         ${loaded && tab === 'gastos' && html`<${GastosPanel}
