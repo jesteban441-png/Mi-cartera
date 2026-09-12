@@ -1,56 +1,3 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Cartera de inversiones</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<style>
-  :root{
-    --bg:#0A1512; --surface:#101E19; --surface-alt:#152922; --ink:#EAF3EE; --ink-soft:#8FA79B; --ink-faint:#5C7268;
-    --accent:#1FD693; --accent-soft:rgba(31,214,147,0.14); --btc:#F7A93B; --ar:#63B4E0; --danger:#FF6B5B;
-    --border:rgba(234,243,238,0.10);
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin:0; font-family:'Work Sans',-apple-system,'Segoe UI',Roboto,sans-serif; color:var(--ink);
-    background-color:#0A1512;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='170'%3E%3Ctext x='6' y='46' font-family='Georgia,serif' font-size='36' fill='%231FD693' opacity='0.05'%3E%24%3C/text%3E%3Ctext x='130' y='96' font-family='Georgia,serif' font-size='30' fill='%23F7A93B' opacity='0.05'%3E%E2%82%BF%3C/text%3E%3Ctext x='40' y='146' font-family='Georgia,serif' font-size='20' fill='%2363B4E0' opacity='0.05'%3EAR%24%3C/text%3E%3C/svg%3E");
-    background-repeat: repeat;
-  }
-  .serif { font-family:'Fraunces',Georgia,serif; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  button { font-family:inherit; cursor:pointer; }
-  input, select, textarea { font-family:inherit; background:#152922; color:#EAF3EE; }
-  input::placeholder, textarea::placeholder { color:#5C7268; }
-  #root { max-width:1100px; margin:0 auto; padding:1.5rem 1.5rem 3rem; }
-  @media (max-width: 700px) { #root { padding:1.25rem 1rem 3rem; } }
-  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
-  .tab-fade { animation: fadeIn 0.25s ease; }
-  .home-grid { display:grid; grid-template-columns: 1fr; gap:16px; align-items:start; }
-  @media (min-width: 900px) { .home-grid { grid-template-columns: 2.1fr 1fr; } }
-  .donut-row { display:flex; flex-direction:column; gap:16px; }
-  @media (min-width: 620px) { .donut-row { flex-direction:row; } .donut-row > div { flex:1; min-width:0; } }
-  .gestion-wrap { max-width:680px; margin:0 auto; }
-</style>
-</head>
-<body>
-<div id="root">Cargando…</div>
-<script type="module">
-import htm from 'https://unpkg.com/htm@3.1.1?module';
-const { useState, useEffect, useMemo, useRef } = React;
-const html = htm.bind(React.createElement);
-
-const C = {
-  bg:'#0A1512', surface:'#101E19', surfaceAlt:'#152922', ink:'#EAF3EE', inkSoft:'#8FA79B', inkFaint:'#5C7268',
-  accent:'#1FD693', accentSoft:'rgba(31,214,147,0.14)', btc:'#F7A93B', ar:'#63B4E0', danger:'#FF6B5B',
-  border:'rgba(234,243,238,0.10)',
-};
-const PALETTE = ['#1FD693','#F7A93B','#63B4E0','#B98CE0','#E0748C','#6FE0C0','#E0C158','#7C93E0','#E08F5B','#8FA79B'];
 const colorFor = (i) => PALETTE[i % PALETTE.length];
 const PLATFORMS = ['IOL', 'Bullmarket', 'BingX', 'Mercado Pago', 'Otro'];
 const PLATFORM_BADGES = {
@@ -437,25 +384,26 @@ function NewsPanel() {
 function ProjectionCard({ startValue, defaultRate }) {
   const [aporte, setAporte] = useState(150000);
   const [tasaAnual, setTasaAnual] = useState(() => { const r = Math.round((defaultRate||0)*10)/10; return r > 0 ? r : 12; });
-  const years = 10;
+  const [plazo, setPlazo] = useState(10);
   const points = useMemo(() => {
+    const anios = Math.max(1, Math.round(plazo) || 1);
     const rMensual = Math.pow(1 + tasaAnual/100, 1/12) - 1;
     const pts = [];
     let v = startValue;
-    for (let m = 0; m <= years*12; m++) {
+    for (let m = 0; m <= anios*12; m++) {
       if (m % 12 === 0) pts.push({ year: m/12, value: Math.round(v) });
       v = v*(1+rMensual) + (aporte || 0);
     }
     return pts;
-  }, [startValue, aporte, tasaAnual]);
+  }, [startValue, aporte, tasaAnual, plazo]);
   const final = points[points.length-1];
   return html`
     <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Proyección a ${years} años</p>
+      <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Proyección a futuro</p>
       <p style=${{ fontSize:12, color:C.inkFaint, margin:'0 0 12px', lineHeight:1.5 }}>
         Si seguís aportando y tu cartera mantiene el ritmo que asumas acá — es una simulación, no una promesa.
       </p>
-      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
         <label style=${{ fontSize:12, color:C.inkSoft }}>Aporte mensual (ARS)
           <input type="number" step="any" value=${aporte} onChange=${e=>setAporte(parseFloat(e.target.value)||0)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
@@ -464,9 +412,13 @@ function ProjectionCard({ startValue, defaultRate }) {
           <input type="number" step="any" value=${tasaAnual} onChange=${e=>setTasaAnual(parseFloat(e.target.value)||0)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
         </label>
+        <label style=${{ fontSize:12, color:C.inkSoft }}>Años
+          <input type="number" step="1" min="1" value=${plazo} onChange=${e=>setPlazo(parseInt(e.target.value)||1)}
+            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
+        </label>
       </div>
       <${ProjectionLine} points=${points} />
-      <p className="mono" style=${{ fontSize:13, color:C.accent, margin:'10px 0 0', textAlign:'right' }}>Año ${years}: ${fmtARS(final.value)}</p>
+      <p className="mono" style=${{ fontSize:13, color:C.accent, margin:'10px 0 0', textAlign:'right' }}>Año ${plazo}: ${fmtARS(final.value)}</p>
     </div>
   `;
 }
@@ -625,12 +577,13 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
 }
 
 /* ---------- app ---------- */
-function App() {
+function App({ user }) {
   const [tab, setTab] = useState('inicio');
-  const [targets, setTargets] = useState(() => loadLS('cartera-objetivo', DEFAULT_TARGETS));
-  const [positions, setPositions] = useState(() => loadLS('portfolio-posiciones', []));
-  const [aportes, setAportes] = useState(() => loadLS('registro-aportes', []));
-  const [history, setHistory] = useState(() => loadLS('historial-valor', []));
+  const [loaded, setLoaded] = useState(false);
+  const [targets, setTargets] = useState(DEFAULT_TARGETS);
+  const [positions, setPositions] = useState([]);
+  const [aportes, setAportes] = useState([]);
+  const [history, setHistory] = useState([]);
   const [showAddTarget, setShowAddTarget] = useState(false);
   const [showAddPosition, setShowAddPosition] = useState(false);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
@@ -641,10 +594,46 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [frase] = useState(() => FRASES[Math.floor(Math.random()*FRASES.length)]);
   const fileInputRef = useRef(null);
+  const saveTimer = useRef(null);
 
-  useEffect(() => { saveLS('cartera-objetivo', targets); }, [targets]);
-  useEffect(() => { saveLS('portfolio-posiciones', positions); }, [positions]);
-  useEffect(() => { saveLS('registro-aportes', aportes); }, [aportes]);
+  // Carga inicial desde Firestore. Si el usuario todavía no tiene un documento
+  // (primera vez que entra), lo arma a partir de lo que haya en este navegador,
+  // para no perder datos que ya hubiera cargado antes de tener cuenta.
+  useEffect(() => {
+    (async () => {
+      try {
+        const ref = doc(db, 'usuarios', user.uid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const d = snap.data();
+          setTargets(d.targets || DEFAULT_TARGETS);
+          setPositions(d.positions || []);
+          setAportes(d.aportes || []);
+          setHistory(d.history || []);
+        } else {
+          setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
+          setPositions(loadLS('portfolio-posiciones', []));
+          setAportes(loadLS('registro-aportes', []));
+          setHistory(loadLS('historial-valor', []));
+        }
+      } catch (e) {
+        setLiveStatus('No se pudo cargar tu cartera desde la nube: ' + e.message);
+      }
+      setLoaded(true);
+    })();
+  }, [user.uid]);
+
+  // Guardado: cada cambio se manda a Firestore (con una pequeña demora para no
+  // mandar un pedido por cada tecla).
+  useEffect(() => {
+    if (!loaded) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, history }).catch((e) => {
+        setLiveStatus('No se pudo guardar en la nube: ' + e.message);
+      });
+    }, 800);
+  }, [targets, positions, aportes, history, loaded]);
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
@@ -709,9 +698,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (positions.length > 0) fetchLivePrices();
+    if (loaded && positions.length > 0) fetchLivePrices();
     // eslint-disable-next-line
-  }, []);
+  }, [loaded]);
 
   const withDerived = positions.map(p => {
     const invested = p.units * p.avgPrice;
@@ -729,11 +718,8 @@ function App() {
     setHistory(prev => {
       const idx = prev.findIndex(h => h.date === today);
       const entry = { date: today, value: Math.round(totalValue), invested: Math.round(totalInvested) };
-      let next;
-      if (idx >= 0) { next = [...prev]; next[idx] = entry; }
-      else next = [...prev, entry];
-      saveLS('historial-valor', next);
-      return next;
+      if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
+      return [...prev, entry];
     });
     // eslint-disable-next-line
   }, [totalValue, totalInvested]);
@@ -807,7 +793,12 @@ function App() {
   return html`
     <div>
       <h1 className="serif" style=${{ fontSize:24, fontWeight:600, letterSpacing:'0.04em', margin:'0 0 4px', color:C.accent }}>CARTERA DE INVERSIONES</h1>
-      <p style=${{ fontSize:13, color:C.inkSoft, margin:'0 0 18px', fontStyle:'italic' }}>${frase}</p>
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18, gap:8, flexWrap:'wrap' }}>
+        <p style=${{ fontSize:13, color:C.inkSoft, margin:0, fontStyle:'italic' }}>${frase}</p>
+        <button onClick=${() => signOut(auth)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:11.5, padding:0, textDecoration:'underline', whiteSpace:'nowrap' }}>
+          ${user.email || user.displayName || 'cuenta'} · cerrar sesión
+        </button>
+      </div>
 
       <div style=${{ display:'flex', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:10, padding:3, marginBottom:20, maxWidth:340 }}>
         ${[['inicio','Inicio'],['gestion','Gestión']].map(([k,label]) => html`
@@ -821,14 +812,15 @@ function App() {
       <input ref=${fileInputRef} type="file" accept="application/json" style=${{ display:'none' }} onChange=${handleImportFile} />
 
       <div key=${tab} className="tab-fade">
-        ${tab === 'inicio' && html`<${HomePanel}
+        ${!loaded && html`<p style=${{ fontSize:13, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Cargando tu cartera...</p>`}
+        ${loaded && tab === 'inicio' && html`<${HomePanel}
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
           assetPieData=${assetPieData} platformPieData=${platformPieData} history=${history} lastUpdated=${lastUpdated}
           usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
           onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
         />`}
 
-        ${tab === 'gestion' && html`<${GestionPanel}
+        ${loaded && tab === 'gestion' && html`<${GestionPanel}
           targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
           addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
           comparisonData=${comparisonData} withDerived=${withDerived}
@@ -850,7 +842,52 @@ function App() {
   `;
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+/* ---------- sesión ---------- */
+function LoginScreen() {
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  async function loginGoogle() {
+    setError(''); setLoading(true);
+    try { await signInWithPopup(auth, googleProvider); }
+    catch (e) { setError('No se pudo iniciar sesión: ' + e.message); }
+    setLoading(false);
+  }
+  return html`
+    <div style=${{ minHeight:'70vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', textAlign:'center', gap:16, padding:'1rem' }}>
+      <p className="serif" style=${{ fontSize:24, fontWeight:600, letterSpacing:'0.04em', color:C.accent, margin:0 }}>CARTERA DE INVERSIONES</p>
+      <p style=${{ fontSize:13, color:C.inkSoft, maxWidth:280, lineHeight:1.5 }}>Iniciá sesión para ver tu cartera, sincronizada en todos tus dispositivos.</p>
+      <button onClick=${loginGoogle} disabled=${loading} style=${{ display:'flex', alignItems:'center', gap:10, padding:'12px 22px', borderRadius:9, border:`0.5px solid ${C.border}`, background:C.surface, color:C.ink, fontSize:14, fontWeight:500 }}>
+        ${loading ? 'Conectando...' : 'Continuar con Google'}
+      </button>
+      ${error && html`<p style=${{ fontSize:12, color:C.danger, maxWidth:280 }}>${error}</p>`}
+    </div>
+  `;
+}
+
+function Root() {
+  const [user, setUser] = useState(undefined); // undefined = todavía no sabemos, null = sin sesión
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    return unsub;
+  }, []);
+
+  if (firebaseConfig.apiKey.indexOf('PEGÁ') === 0) {
+    return html`
+      <div style=${{ padding:'2rem 1.25rem', textAlign:'center', color:C.inkSoft, maxWidth:420, margin:'0 auto' }}>
+        <p style=${{ fontSize:14, lineHeight:1.6 }}>Falta pegar tu configuración de Firebase — buscá "firebaseConfig" arriba del todo del archivo y reemplazá esos valores por los tuyos.</p>
+      </div>
+    `;
+  }
+
+  if (user === undefined) {
+    return html`<div style=${{ padding:'3rem 1rem', textAlign:'center', color:C.inkSoft }}>Cargando sesión...</div>`;
+  }
+  if (user === null) return html`<${LoginScreen} />`;
+  return html`<${App} user=${user} />`;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${Root} />`);
 </script>
 </body>
 </html>
