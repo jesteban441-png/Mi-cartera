@@ -484,10 +484,20 @@ function NewsPanel() {
 
 function ProjectionCard({ startValue, defaultRate, defaultInflacion }) {
   const [aporte, setAporte] = useState(150000);
-  const [tasaAnual, setTasaAnual] = useState(() => { const r = Math.round((defaultRate||0)*10)/10; return r > 0 ? r : 12; });
+  const [mesesInvirtiendo, setMesesInvirtiendo] = useState(6);
+  const [tasaAnual, setTasaAnual] = useState(() => {
+    const acumulado = (defaultRate || 0) / 100;
+    const anual = (Math.pow(1 + acumulado, 12/6) - 1) * 100;
+    return Math.round(anual*10)/10 || 12;
+  });
   const [plazo, setPlazo] = useState(10);
   const [inflacionAnual, setInflacionAnual] = useState(() => { const r = Math.round((defaultInflacion||0)*10)/10; return r > 0 ? r : 30; });
   const [verAjustado, setVerAjustado] = useState(false);
+  const tasaSugerida = useMemo(() => {
+    const acumulado = (defaultRate || 0) / 100;
+    const meses = Math.max(1, mesesInvirtiendo || 1);
+    return Math.round((Math.pow(1 + acumulado, 12/meses) - 1) * 1000) / 10;
+  }, [defaultRate, mesesInvirtiendo]);
   const points = useMemo(() => {
     const anios = Math.max(1, Math.round(plazo) || 1);
     const rMensual = Math.pow(1 + tasaAnual/100, 1/12) - 1;
@@ -522,15 +532,25 @@ function ProjectionCard({ startValue, defaultRate, defaultInflacion }) {
         Si seguís aportando y tu cartera mantiene el ritmo que asumas acá — es una simulación, no una promesa.
         ${verAjustado ? ' En "Ajustado", los pesos futuros se descuentan por la inflación asumida, para verlos en poder de compra de hoy.' : ''}
       </p>
-      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8 }}>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:4 }}>
         <label style=${{ fontSize:12, color:C.inkSoft }}>Aporte mensual (ARS)
           <input type="number" step="any" value=${aporte} onChange=${e=>setAporte(parseFloat(e.target.value)||0)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
         </label>
+        <label style=${{ fontSize:12, color:C.inkSoft }}>Hace cuántos meses invertís
+          <input type="number" step="1" min="1" value=${mesesInvirtiendo} onChange=${e=>setMesesInvirtiendo(parseInt(e.target.value)||1)}
+            className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
+        </label>
+      </div>
+      <div style=${{ marginBottom:8 }}>
         <label style=${{ fontSize:12, color:C.inkSoft }}>Tasa anual asumida (%)
           <input type="number" step="any" value=${tasaAnual} onChange=${e=>setTasaAnual(parseFloat(e.target.value)||0)}
             className="mono" style=${{ width:'100%', padding:'7px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginTop:4 }} />
         </label>
+        <p style=${{ fontSize:11, color:C.inkFaint, margin:'6px 0 0' }}>
+          Con ${mesesInvirtiendo} meses y tu rendimiento acumulado, eso anualizado da <strong className="mono" style=${{ color:C.inkSoft }}>${tasaSugerida}%</strong>.
+          ${Math.abs(tasaSugerida - tasaAnual) > 0.1 ? html` <button onClick=${()=>setTasaAnual(tasaSugerida)} style=${{ border:'none', background:'none', color:C.accent, fontSize:11, textDecoration:'underline', padding:0 }}>usar este valor</button>` : ''}
+        </p>
       </div>
       <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
         <label style=${{ fontSize:12, color:C.inkSoft }}>Años
