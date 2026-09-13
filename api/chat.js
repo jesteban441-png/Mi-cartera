@@ -24,7 +24,7 @@ module.exports = async function handler(req, res) {
 Cómo responder:
 - Dá tu opinión directa cuando te la pidan. No hace falta que siempre te quedes en "a favor y en contra" sin concluir nada — si algo te parece razonable o te parece un error, decilo con claridad y explicá por qué.
 - Podés hablar de cualquier tema de inversión, no solo de lo que está cargado en esta cartera — el contexto de abajo es una ayuda, no un límite.
-- No inventes datos puntuales (precios exactos, noticias específicas, cifras) que no tengas con certeza — si no sabés algo, decilo en vez de inventarlo.
+- No inventes datos puntuales (precios exactos, noticias específicas, cifras) que no tengas con certeza — si no sabés algo, decilo en vez de inventarlo. Tenés acceso a buscar en Google cuando haga falta información actual (precios de hoy, noticias recientes, algo que cambió) — usalo en vez de tirar un número viejo de memoria.
 - Mencioná de vez en cuando, sin ser repetitivo, que sos una IA y no un asesor financiero matriculado — no hace falta en cada respuesta.
 - Respondé corto (se lee en un celular): párrafos cortos, sin relleno.
 - No uses formato markdown (nada de **negrita**, #, guiones de lista ni asteriscos) — el chat solo muestra texto plano. Para separar ideas, usá renglones aparte o números simples ("1)", "2)").
@@ -46,6 +46,7 @@ ${JSON.stringify(contexto || {}, null, 2)}`;
       body: JSON.stringify({
         contents,
         systemInstruction: { parts: [{ text: systemInstruction }] },
+        tools: [{ google_search: {} }],
         generationConfig: { temperature: 0.6, maxOutputTokens: 2000 },
       }),
     });
@@ -55,12 +56,21 @@ ${JSON.stringify(contexto || {}, null, 2)}`;
       throw new Error(`Gemini respondió ${r.status}: ${errText.slice(0, 300)}`);
     }
     const data = await r.json();
-    const texto = (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts || [])
+    const primero = data && data.candidates && data.candidates[0];
+    const texto = (primero && primero.content && primero.content.parts || [])
       .map(p => p.text || '').join('');
     if (!texto) throw new Error('Gemini no devolvió texto (puede haber bloqueado la respuesta por sus filtros de seguridad).');
-    const cortada = data && data.candidates && data.candidates[0] && data.candidates[0].finishReason === 'MAX_TOKENS';
+    const cortada = primero && primero.finishReason === 'MAX_TOKENS';
 
-    res.status(200).json({ ok: true, respuesta: texto + (cortada ? '\n\n(se cortó por longitud — pedile que siga o que resuma)' : '') });
+    let fuentesTexto = '';
+    const chunks = primero && primero.groundingMetadata && primero.groundingMetadata.groundingChunks;
+    if (Array.isArray(chunks) && chunks.length > 0) {
+      const nombres = chunks.map(c => c.web && (c.web.title || c.web.uri)).filter(Boolean);
+      const unicos = [...new Set(nombres)].slice(0, 5);
+      if (unicos.length > 0) fuentesTexto = '\n\nFuentes: ' + unicos.join(' · ');
+    }
+
+    res.status(200).json({ ok: true, respuesta: texto + fuentesTexto + (cortada ? '\n\n(se cortó por longitud — pedile que siga o que resuma)' : '') });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e) });
   }
