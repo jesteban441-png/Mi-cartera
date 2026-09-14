@@ -43,8 +43,24 @@
   .tab-fade { animation: fadeIn 0.25s ease; }
   @keyframes glowPulse { 0%, 100% { text-shadow: 0 0 0px rgba(31,214,147,0); } 50% { text-shadow: 0 0 20px rgba(31,214,147,0.65); } }
   .record-glow { animation: glowPulse 1.8s ease-in-out 3; }
-  .home-grid { display:grid; grid-template-columns: 1fr; gap:16px; align-items:start; }
-  @media (min-width: 900px) { .home-grid { grid-template-columns: 2.1fr 1fr; } }
+  .home-layout {
+    display:grid; grid-template-columns:1fr; gap:16px;
+    grid-template-areas: "header" "resumen" "throwback" "donuts" "health" "news" "evolution" "projection";
+  }
+  @media (min-width: 900px) {
+    .home-layout {
+      grid-template-columns: 2.1fr 1fr;
+      grid-template-areas:
+        "header     news"
+        "resumen    news"
+        "throwback  news"
+        "donuts     news"
+        "health     news"
+        "evolution  news"
+        "projection news";
+      align-items:start;
+    }
+  }
   .donut-row { display:flex; flex-direction:column; gap:16px; }
   @media (min-width: 620px) { .donut-row { flex-direction:row; } .donut-row > div { flex:1; min-width:0; } }
   .gestion-wrap { max-width:680px; margin:0 auto; }
@@ -896,91 +912,89 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
     activoSeleccionado ? (withDerived||[]).filter(p => norm(p.name) === norm(activoSeleccionado)) : []
   , [activoSeleccionado, withDerived]);
   return html`
-    <div className="home-grid">
-      <div>
-        <div style=${{ position:'relative', overflow:'hidden', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:14, padding:'1.5rem 1.25rem', marginBottom:16 }}>
-          <span style=${{ position:'absolute', right:-14, top:-38, fontSize:170, fontFamily:"'Fraunces',serif", color:accentColor, opacity:0.09, pointerEvents:'none', userSelect:'none' }}>$</span>
-          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', position:'relative' }}>
-            <div>
-              <div style=${{ display:'flex', alignItems:'center', gap:8 }}>
-                <p style=${{ fontSize:12.5, color:C.inkSoft, margin:0 }}>Valor total</p>
-                <button onClick=${()=>setHideAmounts(!hideAmounts)} title=${hideAmounts ? 'Mostrar montos' : 'Ocultar montos'}
-                  style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:0, lineHeight:1 }}>${hideAmounts ? '🙈' : '👁'}</button>
-              </div>
-              <p className=${`serif${esNuevoMaximo ? ' record-glow' : ''}`} style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValueAnimado)}</p>
-              ${esNuevoMaximo && !hideAmounts && html`<p style=${{ fontSize:11, color:C.accent, margin:'2px 0 0', fontWeight:500 }}>✦ Nuevo máximo</p>`}
-              <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmtMasked(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
+    <div className="home-layout">
+      <div style=${{ gridArea:'header', position:'relative', overflow:'hidden', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:14, padding:'1.5rem 1.25rem' }}>
+        <span style=${{ position:'absolute', right:-14, top:-38, fontSize:170, fontFamily:"'Fraunces',serif", color:accentColor, opacity:0.09, pointerEvents:'none', userSelect:'none' }}>$</span>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', position:'relative' }}>
+          <div>
+            <div style=${{ display:'flex', alignItems:'center', gap:8 }}>
+              <p style=${{ fontSize:12.5, color:C.inkSoft, margin:0 }}>Valor total</p>
+              <button onClick=${()=>setHideAmounts(!hideAmounts)} title=${hideAmounts ? 'Mostrar montos' : 'Ocultar montos'}
+                style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:13, padding:0, lineHeight:1 }}>${hideAmounts ? '🙈' : '👁'}</button>
             </div>
-            ${!modoPresentacion && html`
-              <div style=${{ display:'flex', gap:6 }}>
-                <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
-                <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
-              </div>
-            `}
+            <p className=${`serif${esNuevoMaximo ? ' record-glow' : ''}`} style=${{ fontSize:34, fontWeight:500, margin:0, color:accentColor }}>${fmtMasked(totalValueAnimado)}</p>
+            ${esNuevoMaximo && !hideAmounts && html`<p style=${{ fontSize:11, color:C.accent, margin:'2px 0 0', fontWeight:500 }}>✦ Nuevo máximo</p>`}
+            <p className="mono" style=${{ fontSize:13, margin:'6px 0 0', color: totalPL>=0 ? C.accent : C.danger }}>${totalPL>=0?'▲':'▼'} ${fmtMasked(Math.abs(totalPL))} (${fmtPct(totalPLPct)})</p>
           </div>
-          <div style=${{ display:'flex', alignItems:'center', gap:8, marginTop:14, position:'relative' }}>
-            <button onClick=${()=>setShowUSD(false)} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: !showUSD?C.accentSoft:'transparent', color: !showUSD?C.accent:C.inkSoft }}>ARS</button>
-            <button onClick=${()=>setShowUSD(true)} disabled=${!usdArs} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: showUSD?C.accentSoft:'transparent', color: showUSD?C.accent:C.inkSoft }}>USD</button>
-            ${lastUpdated && html`<span className="mono" style=${{ fontSize:11, color:C.inkFaint, marginLeft:'auto' }}>Actualizado ${lastUpdated}</span>`}
-          </div>
-        </div>
-
-        <${ResumenSemanal} history=${history} movimientos=${movimientos||[]} withDerived=${withDerived} />
-
-        <${ThrowbackCard} history=${history} totalValue=${totalValue} fmtMasked=${fmtMasked} />
-
-        <div className="donut-row" style=${{ marginBottom:16 }}>
-          <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-            <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
-            ${assetPieData.length === 0
-              ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
-              : html`
-                <${DonutChart} data=${assetPieData} height=${260} onSliceClick=${(d) => setActivoSeleccionado(activoSeleccionado === d.name ? null : d.name)} />
-                <${LegendList} data=${assetLegendData} seleccionado=${activoSeleccionado}
-                  onItemClick=${(d) => setActivoSeleccionado(activoSeleccionado === d.name ? null : d.name)} />
-                ${activoSeleccionado && html`
-                  <div style=${{ marginTop:10, padding:'10px 12px', background:C.surfaceAlt, borderRadius:8 }}>
-                    <p style=${{ fontSize:12, fontWeight:500, margin:'0 0 6px' }}>${activoSeleccionado}</p>
-                    ${posicionesSeleccionadas.length === 0
-                      ? html`<p style=${{ fontSize:12, color:C.inkFaint, margin:0 }}>Sin posiciones cargadas con ese nombre.</p>`
-                      : posicionesSeleccionadas.map(p => html`
-                        <div key=${p.id} style=${{ display:'flex', justifyContent:'space-between', fontSize:12, padding:'3px 0' }}>
-                          <span style=${{ color:C.inkSoft }}>${p.units} un. · ${p.platform}</span>
-                          <span className="mono">${fmtMasked(p.value)}</span>
-                        </div>
-                      `)}
-                  </div>
-                `}
-              `}
-          </div>
-          <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-            <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
-            ${platformPieData.length === 0
-              ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
-              : html`<${DonutChart} data=${platformPieData} height=${260} /><${LegendList} data=${platformLegendData} />`}
-          </div>
-        </div>
-
-        <${HealthScoreCard} comparisonData=${comparisonData||[]} history=${history} />
-
-        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
-            <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Cartera vs. ahorro sin invertir</p>
-            <div style=${{ display:'flex', background:C.bg, borderRadius:7, padding:2 }}>
-              <button onClick=${()=>setVerAjustado(false)} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: !verAjustado?C.surfaceAlt:'transparent', color: !verAjustado?C.ink:C.inkSoft }}>Nominal</button>
-              <button onClick=${()=>setVerAjustado(true)} disabled=${!hayInflacion} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: verAjustado?C.surfaceAlt:'transparent', color: verAjustado?C.ink:C.inkSoft }}>Ajustado</button>
+          ${!modoPresentacion && html`
+            <div style=${{ display:'flex', gap:6 }}>
+              <button onClick=${onExport} title="Exportar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬇</button>
+              <button onClick=${onImportClick} title="Importar backup" style=${{ border:`0.5px solid ${C.border}`, background:C.surfaceAlt, color:C.ink, borderRadius:7, width:30, height:30, fontSize:14 }}>⬆</button>
             </div>
-          </div>
-          ${history.length < 2
-            ? html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Se va armando solo, un punto por día que abrís la app.</p>`
-            : html`<${EvolutionChart} history=${historyMostrado} />`}
-          ${verAjustado && html`<p style=${{ fontSize:11, color:C.inkFaint, margin:'8px 0 0', lineHeight:1.5 }}>Montos viejos llevados a poder de compra de hoy, usando el IPC del BCRA.</p>`}
+          `}
         </div>
-
-        <${ProjectionCard} startValue=${totalValue} defaultRate=${totalPLPct} defaultInflacion=${inflacionAnualizada} />
+        <div style=${{ display:'flex', alignItems:'center', gap:8, marginTop:14, position:'relative' }}>
+          <button onClick=${()=>setShowUSD(false)} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: !showUSD?C.accentSoft:'transparent', color: !showUSD?C.accent:C.inkSoft }}>ARS</button>
+          <button onClick=${()=>setShowUSD(true)} disabled=${!usdArs} style=${{ padding:'4px 10px', borderRadius:6, border:'none', fontSize:11.5, fontWeight:500, background: showUSD?C.accentSoft:'transparent', color: showUSD?C.accent:C.inkSoft }}>USD</button>
+          ${lastUpdated && html`<span className="mono" style=${{ fontSize:11, color:C.inkFaint, marginLeft:'auto' }}>Actualizado ${lastUpdated}</span>`}
+        </div>
       </div>
 
-      <${NewsPanel} />
+      <div style=${{ gridArea:'resumen' }}><${ResumenSemanal} history=${history} movimientos=${movimientos||[]} withDerived=${withDerived} /></div>
+
+      <div style=${{ gridArea:'throwback' }}><${ThrowbackCard} history=${history} totalValue=${totalValue} fmtMasked=${fmtMasked} /></div>
+
+      <div className="donut-row" style=${{ gridArea:'donuts' }}>
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por activo</p>
+          ${assetPieData.length === 0
+            ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
+            : html`
+              <${DonutChart} data=${assetPieData} height=${260} onSliceClick=${(d) => setActivoSeleccionado(activoSeleccionado === d.name ? null : d.name)} />
+              <${LegendList} data=${assetLegendData} seleccionado=${activoSeleccionado}
+                onItemClick=${(d) => setActivoSeleccionado(activoSeleccionado === d.name ? null : d.name)} />
+              ${activoSeleccionado && html`
+                <div style=${{ marginTop:10, padding:'10px 12px', background:C.surfaceAlt, borderRadius:8 }}>
+                  <p style=${{ fontSize:12, fontWeight:500, margin:'0 0 6px' }}>${activoSeleccionado}</p>
+                  ${posicionesSeleccionadas.length === 0
+                    ? html`<p style=${{ fontSize:12, color:C.inkFaint, margin:0 }}>Sin posiciones cargadas con ese nombre.</p>`
+                    : posicionesSeleccionadas.map(p => html`
+                      <div key=${p.id} style=${{ display:'flex', justifyContent:'space-between', fontSize:12, padding:'3px 0' }}>
+                        <span style=${{ color:C.inkSoft }}>${p.units} un. · ${p.platform}</span>
+                        <span className="mono">${fmtMasked(p.value)}</span>
+                      </div>
+                    `)}
+                </div>
+              `}
+            `}
+        </div>
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Reparto por plataforma</p>
+          ${platformPieData.length === 0
+            ? html`<p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Cargá posiciones en Gestión.</p>`
+            : html`<${DonutChart} data=${platformPieData} height=${260} /><${LegendList} data=${platformLegendData} />`}
+        </div>
+      </div>
+
+      <div style=${{ gridArea:'health' }}><${HealthScoreCard} comparisonData=${comparisonData||[]} history=${history} /></div>
+
+      <div style=${{ gridArea:'news' }}><${NewsPanel} /></div>
+
+      <div style=${{ gridArea:'evolution', background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Cartera vs. ahorro sin invertir</p>
+          <div style=${{ display:'flex', background:C.bg, borderRadius:7, padding:2 }}>
+            <button onClick=${()=>setVerAjustado(false)} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: !verAjustado?C.surfaceAlt:'transparent', color: !verAjustado?C.ink:C.inkSoft }}>Nominal</button>
+            <button onClick=${()=>setVerAjustado(true)} disabled=${!hayInflacion} style=${{ padding:'4px 8px', borderRadius:5, border:'none', fontSize:11, fontWeight:500, background: verAjustado?C.surfaceAlt:'transparent', color: verAjustado?C.ink:C.inkSoft }}>Ajustado</button>
+          </div>
+        </div>
+        ${history.length < 2
+          ? html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Se va armando solo, un punto por día que abrís la app.</p>`
+          : html`<${EvolutionChart} history=${historyMostrado} />`}
+        ${verAjustado && html`<p style=${{ fontSize:11, color:C.inkFaint, margin:'8px 0 0', lineHeight:1.5 }}>Montos viejos llevados a poder de compra de hoy, usando el IPC del BCRA.</p>`}
+      </div>
+
+      <div style=${{ gridArea:'projection' }}><${ProjectionCard} startValue=${totalValue} defaultRate=${totalPLPct} defaultInflacion=${inflacionAnualizada} /></div>
     </div>
   `;
 }
@@ -1275,13 +1289,15 @@ function BulkMovimientosForm({ onApply, onClose }) {
   `;
 }
 
-function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovimientos, aportes, modoPresentacion }) {
+function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovimiento, bulkAddMovimientos, aportes, modoPresentacion }) {
   const [monthKey, setMonthKey] = useState(() => {
     const fechas = [...movimientos.map(m => m.fecha), ...aportes.map(a => a.fecha)].filter(Boolean).sort();
     return fechas.length ? monthKeyOf(fechas[fechas.length - 1]) : new Date().toISOString().slice(0,7);
   });
   const [showAdd, setShowAdd] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [mostrarTodos, setMostrarTodos] = useState(false);
 
   const categorias = useMemo(() => [...new Set(movimientos.map(m => m.categoria))].sort(), [movimientos]);
 
@@ -1317,6 +1333,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
   const movimientosDelMes = useMemo(() =>
     movimientos.filter(m => monthKeyOf(m.fecha)===monthKey).sort((a,b)=>b.fecha.localeCompare(a.fecha))
   , [movimientos, monthKey]);
+  const movimientosVisibles = mostrarTodos ? movimientosDelMes : movimientosDelMes.slice(0, 10);
 
   const aportesDelMes = useMemo(() => aportes.filter(a => monthKeyOf(a.fecha)===monthKey), [aportes, monthKey]);
 
@@ -1394,18 +1411,43 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, bulkAddMovi
         ${movimientosDelMes.length === 0 && !showAdd && !showBulk && html`
           <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>No hay movimientos cargados para este mes.</p>
         `}
-        ${movimientosDelMes.map(m => html`
-          <div key=${m.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'9px 0', borderTop:`0.5px solid ${C.border}` }}>
-            <div>
-              <p style=${{ fontSize:13.5, margin:0 }}>${displayCat(m.categoria)}</p>
-              <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso' ? 'Ingreso' : 'Gasto'} · ${m.fecha}</span>
+        ${movimientosVisibles.map(m => html`
+          <div key=${m.id} style=${{ padding:'9px 0', borderTop:`0.5px solid ${C.border}` }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div style=${{ flex:1, cursor: modoPresentacion ? 'default' : 'pointer' }} onClick=${!modoPresentacion ? (() => setEditingId(editingId===m.id ? null : m.id)) : undefined}>
+                <p style=${{ fontSize:13.5, margin:0 }}>${displayCat(m.categoria)}${!modoPresentacion ? html`<span style=${{ color:C.inkFaint }}> ✎</span>` : ''}</p>
+                <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso' ? 'Ingreso' : 'Gasto'} · ${m.fecha}</span>
+              </div>
+              <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
+                <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso'?'+':'−'} ${fmtARS(m.monto)}</span>
+                ${!modoPresentacion && html`<button onClick=${() => removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>`}
+              </div>
             </div>
-            <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
-              <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso'?'+':'−'} ${fmtARS(m.monto)}</span>
-              ${!modoPresentacion && html`<button onClick=${() => removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>`}
-            </div>
+            ${editingId===m.id && !modoPresentacion && html`
+              <div style=${{ display:'flex', flexDirection:'column', gap:8, marginTop:8 }}>
+                <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <input type="date" defaultValue=${m.fecha} onBlur=${e=>updateMovimiento(m.id, { fecha: e.target.value })}
+                    style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                  <select defaultValue=${m.tipo} onChange=${e=>updateMovimiento(m.id, { tipo: e.target.value })}
+                    style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }}>
+                    <option value="ingreso">Ingreso</option>
+                    <option value="gasto">Gasto</option>
+                  </select>
+                </div>
+                <input defaultValue=${displayCat(m.categoria)} onBlur=${e=>updateMovimiento(m.id, { categoria: e.target.value })} placeholder="Categoría"
+                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                <input type="number" step="any" defaultValue=${m.monto} onBlur=${e=>updateMovimiento(m.id, { monto: parseFloat(e.target.value)||m.monto })} placeholder="Monto"
+                  style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
+                <button onClick=${()=>setEditingId(null)} style=${{ padding:'7px', borderRadius:6, border:'none', background:C.accent, color:'#0A1512', fontSize:12.5, fontWeight:600 }}>Listo</button>
+              </div>
+            `}
           </div>
         `)}
+        ${movimientosDelMes.length > 10 && html`
+          <button onClick=${()=>setMostrarTodos(!mostrarTodos)} style=${{ display:'block', width:'100%', textAlign:'center', border:'none', background:'none', color:C.accent, fontSize:12.5, padding:'10px 0 0' }}>
+            ${mostrarTodos ? '▴ Ver menos' : `▾ Ver los ${movimientosDelMes.length - 10} restantes`}
+          </button>
+        `}
       </div>
     </div>
   `;
@@ -1519,6 +1561,9 @@ function App({ user }) {
 
   function addMovimiento(m) { setMovimientos([...movimientos, { ...m, categoria: norm(m.categoria), id:'m'+Date.now() }]); }
   function removeMovimiento(id) { setMovimientos(movimientos.filter(m => m.id !== id)); }
+  function updateMovimiento(id, patch) {
+    setMovimientos(movimientos.map(m => m.id === id ? { ...m, ...patch, categoria: norm(patch.categoria !== undefined ? patch.categoria : m.categoria) } : m));
+  }
   function bulkAddMovimientos(nuevos) {
     setMovimientos([...movimientos, ...nuevos.map((n,i) => ({ ...n, categoria: norm(n.categoria), id:'m'+Date.now()+'-'+i }))]);
   }
@@ -1727,7 +1772,7 @@ function App({ user }) {
         />`}
 
         ${loaded && tab === 'gastos' && html`<${GastosPanel}
-          movimientos=${movimientos} addMovimiento=${addMovimiento} removeMovimiento=${removeMovimiento} bulkAddMovimientos=${bulkAddMovimientos}
+          movimientos=${movimientos} addMovimiento=${addMovimiento} removeMovimiento=${removeMovimiento} updateMovimiento=${updateMovimiento} bulkAddMovimientos=${bulkAddMovimientos}
           aportes=${aportes} modoPresentacion=${modoPresentacion}
         />`}
       </div>
