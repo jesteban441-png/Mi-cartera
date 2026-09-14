@@ -52,6 +52,7 @@ ${JSON.stringify(contexto || {}, null, 2)}`;
     });
 
     if (!r.ok) {
+      if (r.status === 429) throw new Error('Estás mandando mensajes muy rápido para el plan gratis de Gemini — esperá un minuto y probá de nuevo.');
       const errText = await r.text();
       throw new Error(`Gemini respondió ${r.status}: ${errText.slice(0, 300)}`);
     }
