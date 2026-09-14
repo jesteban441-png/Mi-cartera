@@ -1604,6 +1604,28 @@ function App({ user }) {
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
+  // Si cargaste una posición de algo que todavía no está en "Cartera objetivo",
+  // se agrega solo como activo (en 0%, para que vos le pongas el porcentaje) —
+  // así no hace falta agregar a mano lo que ya es un hecho. Lo que agregues vos
+  // manualmente (algo que todavía no tenés) sigue funcionando igual.
+  useEffect(() => {
+    if (!loaded) return;
+    setTargets(prevTargets => {
+      const yaExisten = new Set(prevTargets.map(t => norm(t.name)));
+      const vistos = new Set();
+      const nuevos = [];
+      positions.forEach(p => {
+        const n = norm(p.name);
+        if (n && !yaExisten.has(n) && !vistos.has(n)) {
+          vistos.add(n);
+          nuevos.push({ id: 'auto' + Date.now() + '-' + nuevos.length, name: p.name, ticker: '', platform: p.platform, target: 0 });
+        }
+      });
+      return nuevos.length > 0 ? [...prevTargets, ...nuevos] : prevTargets;
+    });
+  }, [positions, loaded]);
+
+
   useEffect(() => { saveLS('ocultar-montos', hideAmounts); }, [hideAmounts]);
 
   function addTarget(t) { setTargets([...targets, { ...t, id:'c'+Date.now() }]); setShowAddTarget(false); }
