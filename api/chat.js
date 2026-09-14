@@ -52,7 +52,12 @@ ${JSON.stringify(contexto || {}, null, 2)}`;
     });
 
     if (!r.ok) {
-      if (r.status === 429) throw new Error('Estás mandando mensajes muy rápido para el plan gratis de Gemini — esperá un minuto y probá de nuevo.');
+      if (r.status === 429) {
+        const errText = await r.text();
+        let detalle = '';
+        try { detalle = (JSON.parse(errText).error || {}).message || ''; } catch (e) {}
+        throw new Error('Gemini devolvió "demasiadas consultas" (429). Puede ser el límite por minuto o el límite diario del plan gratis — no necesariamente por mandar mensajes rápido.' + (detalle ? ' Detalle: ' + detalle.slice(0,200) : '') + ' Revisá tu cuota en aistudio.google.com/app/apikey.');
+      }
       const errText = await r.text();
       throw new Error(`Gemini respondió ${r.status}: ${errText.slice(0, 300)}`);
     }
