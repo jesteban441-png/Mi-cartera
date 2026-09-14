@@ -334,7 +334,7 @@ function LegendList({ data, onItemClick, seleccionado }) {
 }
 
 /* ---------- formularios ---------- */
-function AddTargetForm({ onAdd, onCancel }) {
+function AddTargetForm({ onAdd, onCancel, catalogo }) {
   const [name, setName] = useState(''); const [ticker, setTicker] = useState('');
   const [platform, setPlatform] = useState(PLATFORMS[0]); const [target, setTarget] = useState(''); const [error, setError] = useState('');
   function submit() {
@@ -349,7 +349,10 @@ function AddTargetForm({ onAdd, onCancel }) {
     <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
       <label style=${labelStyle}>Nombre<input style=${inputStyle} value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: Oro" /></label>
       <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
-        <label style=${labelStyle}>Ticker (opcional)<input style=${inputStyle} value=${ticker} onChange=${e=>setTicker(e.target.value)} placeholder="Ej: GOLD" /></label>
+        <label style=${labelStyle}>Ticker (opcional)
+          <input style=${inputStyle} list="catalogo-tickers" value=${ticker} onChange=${e=>setTicker(e.target.value)} placeholder="Ej: GOLD" />
+          <datalist id="catalogo-tickers">${(catalogo||[]).map(s=>html`<option key=${s} value=${s} />`)}</datalist>
+        </label>
         <label style=${labelStyle}>Plataforma
           <select style=${inputStyle} value=${platform} onChange=${e=>setPlatform(e.target.value)}>${PLATFORMS.map(p=>html`<option key=${p} value=${p}>${p}</option>`)}</select>
         </label>
@@ -364,7 +367,7 @@ function AddTargetForm({ onAdd, onCancel }) {
   `;
 }
 
-function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget, modoPresentacion }) {
+function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget, modoPresentacion, catalogoSimbolos }) {
   const [editingId, setEditingId] = useState(null);
   const pieData = targets.map((t,i)=>({ name:t.name, value:t.target, colorIndex:i })).filter(d=>d.value>0);
   const sumOff = Math.round(targetSum*10)/10 !== 100;
@@ -382,7 +385,7 @@ function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, ad
         <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Activos</p>
         ${!modoPresentacion && html`<button onClick=${() => setShowAddTarget(!showAddTarget)} style=${{ border:`1px solid ${C.accent}`, background: showAddTarget ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>`}
       </div>
-      ${showAddTarget && !modoPresentacion && html`<${AddTargetForm} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
+      ${showAddTarget && !modoPresentacion && html`<${AddTargetForm} catalogo=${catalogoSimbolos} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} />`}
       ${targets.map((t,i) => html`
         <div key=${t.id} style=${{ borderTop:`0.5px solid ${C.border}`, padding:'11px 0' }}>
           <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
@@ -442,7 +445,7 @@ function BulkUpdateForm({ onApply, onClose }) {
   `;
 }
 
-function AddPositionForm({ targets, onAdd, onCancel }) {
+function AddPositionForm({ targets, catalogo, onAdd, onCancel }) {
   const [name, setName] = useState(''); const [platform, setPlatform] = useState(PLATFORMS[0]);
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
   const [units, setUnits] = useState(''); const [avgPrice, setAvgPrice] = useState(''); const [currentPrice, setCurrentPrice] = useState(''); const [error, setError] = useState('');
@@ -454,13 +457,18 @@ function AddPositionForm({ targets, onAdd, onCancel }) {
     if (!(c > 0)) return setError('El precio actual tiene que ser mayor a 0');
     setError(''); onAdd({ name:name.trim(), platform, fecha, units:u, avgPrice:a, currentPrice:c });
   }
+  const opcionesNombre = useMemo(() => {
+    const set = new Set(targets.map(t=>t.name));
+    (catalogo||[]).forEach(s => set.add(s));
+    return [...set].sort();
+  }, [targets, catalogo]);
   const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
   const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
   return html`
     <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
       <label style=${labelStyle}>Nombre del activo
         <input style=${inputStyle} list="target-names" value=${name} onChange=${e=>setName(e.target.value)} placeholder="Ej: SPY" />
-        <datalist id="target-names">${targets.map(t=>html`<option key=${t.id} value=${t.name} />`)}</datalist>
+        <datalist id="target-names">${opcionesNombre.map(n=>html`<option key=${n} value=${n} />`)}</datalist>
       </label>
       <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
         <label style=${labelStyle}>Plataforma
@@ -1061,12 +1069,13 @@ function ChatIA({ contexto }) {
 }
 
 function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
-  comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice,
+  comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice, updatePosition,
   showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
   aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion, history,
-  diario, addEntradaDiario, removeEntradaDiario, metas, addMeta, removeMeta }) {
+  diario, addEntradaDiario, removeEntradaDiario, metas, addMeta, removeMeta, catalogoSimbolos }) {
 
   const [aporteMonto, setAporteMonto] = useState('');
+  const [editingPosId, setEditingPosId] = useState(null);
   const sugerencias = useMemo(() => {
     const monto = parseFloat(aporteMonto);
     if (!(monto > 0)) return null;
@@ -1103,7 +1112,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
     <div className="gestion-wrap">
       <${TargetsEditor} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
         addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
-        modoPresentacion=${modoPresentacion} />
+        modoPresentacion=${modoPresentacion} catalogoSimbolos=${catalogoSimbolos} />
 
       ${withDerived.length > 0 && html`
         <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
@@ -1152,7 +1161,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
           </button>
         `}
         ${showBulkUpdate && !modoPresentacion && html`<${BulkUpdateForm} onApply=${bulkUpdatePrices} onClose=${() => setShowBulkUpdate(false)} />`}
-        ${showAddPosition && !modoPresentacion && html`<${AddPositionForm} targets=${targets} onAdd=${addPosition} onCancel=${() => setShowAddPosition(false)} />`}
+        ${showAddPosition && !modoPresentacion && html`<${AddPositionForm} targets=${targets} catalogo=${catalogoSimbolos} onAdd=${addPosition} onCancel=${() => setShowAddPosition(false)} />`}
         ${withDerived.length === 0 && !showAddPosition && html`
           <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>Todavía no cargaste ninguna posición.</p>
         `}
@@ -1170,7 +1179,42 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
               </div>
               ${!modoPresentacion && html`<button onClick=${() => removePosition(p.id)} aria-label="Eliminar posición" style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:15, padding:4 }}>✕</button>`}
             </div>
-            <div className="mono" style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}${p.fecha ? ' · ' + p.fecha : ''}</div>
+            ${modoPresentacion
+              ? html`<div className="mono" style=${{ fontSize:12.5, color:C.inkSoft, marginBottom:6 }}>${p.units} un. · compra ${fmtARS(p.avgPrice)}${p.fecha ? ' · ' + p.fecha : ''}</div>`
+              : html`<button onClick=${() => setEditingPosId(editingPosId===p.id ? null : p.id)} className="mono"
+                  style=${{ display:'block', textAlign:'left', border:'none', background:'none', padding:0, fontSize:12.5, color:C.inkSoft, marginBottom:6, textDecoration:'underline' }}>
+                  ${p.units} un. · compra ${fmtARS(p.avgPrice)}${p.fecha ? ' · ' + p.fecha : ''} ✎
+                </button>`}
+            ${editingPosId===p.id && !modoPresentacion && html`
+              <div style=${{ display:'flex', flexDirection:'column', gap:8, marginBottom:10, padding:10, background:C.surfaceAlt, borderRadius:8 }}>
+                <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <label style=${{ fontSize:11, color:C.inkSoft }}>Unidades
+                    <input type="number" step="any" defaultValue=${p.units} onBlur=${e=>updatePosition(p.id, { units: parseFloat(e.target.value)||p.units })}
+                      style=${{ width:'100%', padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5, marginTop:3 }} />
+                  </label>
+                  <label style=${{ fontSize:11, color:C.inkSoft }}>Precio compra (ARS)
+                    <input type="number" step="any" defaultValue=${p.avgPrice} onBlur=${e=>updatePosition(p.id, { avgPrice: parseFloat(e.target.value)||p.avgPrice })}
+                      style=${{ width:'100%', padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5, marginTop:3 }} />
+                  </label>
+                </div>
+                <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <label style=${{ fontSize:11, color:C.inkSoft }}>Fecha
+                    <input type="date" defaultValue=${p.fecha || ''} onBlur=${e=>updatePosition(p.id, { fecha: e.target.value })}
+                      style=${{ width:'100%', padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5, marginTop:3 }} />
+                  </label>
+                  <label style=${{ fontSize:11, color:C.inkSoft }}>Plataforma
+                    <select defaultValue=${p.platform} onChange=${e=>updatePosition(p.id, { platform: e.target.value })}
+                      style=${{ width:'100%', padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5, marginTop:3 }}>
+                      ${PLATFORMS.map(pl=>html`<option key=${pl} value=${pl}>${pl}</option>`)}
+                    </select>
+                  </label>
+                </div>
+                <p style=${{ fontSize:10.5, color:C.inkFaint, margin:0, lineHeight:1.5 }}>
+                  Si vas acumulando de a poco (como acciones o bonos argentinos), sumá acá unidades y ajustá el precio de compra promedio, en vez de crear una posición nueva cada vez.
+                </p>
+                <button onClick=${()=>setEditingPosId(null)} style=${{ padding:'7px', borderRadius:6, border:'none', background:C.accent, color:'#0A1512', fontSize:12.5, fontWeight:600 }}>Listo</button>
+              </div>
+            `}
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               ${modoPresentacion
                 ? html`<span style=${{ fontSize:12, color:C.inkSoft }}>Precio actual: <strong className="mono">${fmtARS(p.currentPrice)}</strong></span>`
@@ -1472,6 +1516,7 @@ function App({ user }) {
   const [hideAmounts, setHideAmounts] = useState(() => loadLS('ocultar-montos', false));
   const [modoPresentacion, setModoPresentacion] = useState(false);
   const [inflacionMensual, setInflacionMensual] = useState([]);
+  const [catalogoSimbolos, setCatalogoSimbolos] = useState([]);
   const [inflacionAnualizada, setInflacionAnualizada] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [frase] = useState(() => FRASES[Math.floor(Math.random()*FRASES.length)]);
@@ -1576,6 +1621,7 @@ function App({ user }) {
   function addPosition(p) { setPositions([...positions, { ...p, id:'p'+Date.now() }]); setShowAddPosition(false); }
   function removePosition(id) { setPositions(positions.filter(p => p.id !== id)); }
   function updateCurrentPrice(id, val) { setPositions(positions.map(p => p.id === id ? { ...p, currentPrice: val } : p)); }
+  function updatePosition(id, patch) { setPositions(positions.map(p => p.id === id ? { ...p, ...patch } : p)); }
 
   function addAporte(a) { setAportes([...aportes, { ...a, id:'a'+Date.now() }]); }
   function removeAporte(id) { setAportes(aportes.filter(a => a.id !== id)); }
@@ -1647,6 +1693,9 @@ function App({ user }) {
     if (!loaded) return;
     fetch('/api/inflacion').then(r => r.json()).then(data => {
       if (data.ok) { setInflacionMensual(data.mensual || []); setInflacionAnualizada(data.anualizada); }
+    }).catch(() => {});
+    fetch('/api/catalogo').then(r => r.json()).then(data => {
+      if (data.ok) setCatalogoSimbolos(data.simbolos || []);
     }).catch(() => {});
     // eslint-disable-next-line
   }, [loaded]);
@@ -1789,13 +1838,13 @@ function App({ user }) {
           addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
           comparisonData=${comparisonData} withDerived=${withDerived}
           showAddPosition=${showAddPosition} setShowAddPosition=${setShowAddPosition}
-          addPosition=${addPosition} removePosition=${removePosition} updateCurrentPrice=${updateCurrentPrice}
+          addPosition=${addPosition} removePosition=${removePosition} updateCurrentPrice=${updateCurrentPrice} updatePosition=${updatePosition}
           showBulkUpdate=${showBulkUpdate} setShowBulkUpdate=${setShowBulkUpdate} bulkUpdatePrices=${bulkUpdatePrices}
           fetchLivePrices=${fetchLivePrices} liveStatus=${liveStatus} liveLoading=${liveLoading}
           aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
           totalValue=${totalValue} actualValueByName=${actualValueByName} modoPresentacion=${modoPresentacion} history=${history}
           diario=${diario} addEntradaDiario=${addEntradaDiario} removeEntradaDiario=${removeEntradaDiario}
-          metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta}
+          metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta} catalogoSimbolos=${catalogoSimbolos}
         />`}
 
         ${loaded && tab === 'gastos' && html`<${GastosPanel}
