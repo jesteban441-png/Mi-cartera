@@ -1494,38 +1494,48 @@ function App({ user }) {
   // Carga inicial desde Firestore. Si el usuario todavía no tiene un documento
   // (primera vez que entra), lo arma a partir de lo que haya en este navegador,
   // para no perder datos que ya hubiera cargado antes de tener cuenta.
-  useEffect(() => {
-    (async () => {
-      try {
-        const ref = doc(db, 'usuarios', user.uid);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          const d = snap.data();
-          setTargets(d.targets || DEFAULT_TARGETS);
-          setPositions(d.positions || []);
-          setAportes(d.aportes || []);
-          setMovimientos(d.movimientos || []);
-          setDiario(d.diario || []);
-          setMetas(d.metas || []);
-          setHistory(d.history || []);
-        } else {
-          setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
-          setPositions(loadLS('portfolio-posiciones', []));
-          setAportes(loadLS('registro-aportes', []));
-          setMovimientos(loadLS('registro-movimientos', []));
-          setDiario([]);
-          setMetas([]);
-          setHistory(loadLS('historial-valor', []));
-        }
-      } catch (e) {
-        setLiveStatus('No se pudo cargar tu cartera desde la nube: ' + e.message);
+  // IMPORTANTE: "loaded" solo se pone en true si la carga funcionó de verdad —
+  // si se pone en true con datos vacíos (por ejemplo, sin conexión) y algo dispara
+  // el guardado después, se pisarían los datos reales de la nube con datos vacíos.
+  const [loadError, setLoadError] = useState(null);
+
+  async function cargarDesdeFirestore() {
+    setLoadError(null);
+    try {
+      const ref = doc(db, 'usuarios', user.uid);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const d = snap.data();
+        setTargets(d.targets || DEFAULT_TARGETS);
+        setPositions(d.positions || []);
+        setAportes(d.aportes || []);
+        setMovimientos(d.movimientos || []);
+        setDiario(d.diario || []);
+        setMetas(d.metas || []);
+        setHistory(d.history || []);
+      } else {
+        setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
+        setPositions(loadLS('portfolio-posiciones', []));
+        setAportes(loadLS('registro-aportes', []));
+        setMovimientos(loadLS('registro-movimientos', []));
+        setDiario([]);
+        setMetas([]);
+        setHistory(loadLS('historial-valor', []));
       }
       setLoaded(true);
-    })();
+    } catch (e) {
+      setLoadError('No se pudo cargar tu cartera desde la nube (' + e.message + '). Revisá tu conexión y tocá "Reintentar" — no se va a guardar nada hasta que la carga funcione, para no pisar tus datos reales.');
+    }
+  }
+
+  useEffect(() => {
+    cargarDesdeFirestore();
+    // eslint-disable-next-line
   }, [user.uid]);
 
   // Guardado: cada cambio se manda a Firestore (con una pequeña demora para no
-  // mandar un pedido por cada tecla).
+  // mandar un pedido por cada tecla). Solo corre si "loaded" es true, es decir,
+  // solo después de una carga exitosa.
   useEffect(() => {
     if (!loaded) return;
     clearTimeout(saveTimer.current);
@@ -1746,7 +1756,13 @@ function App({ user }) {
       <input ref=${fileInputRef} type="file" accept="application/json" style=${{ display:'none' }} onChange=${handleImportFile} />
 
       <div key=${tab} className="tab-fade" onTouchStart=${handleTouchStart} onTouchEnd=${handleTouchEnd}>
-        ${!loaded && html`<p style=${{ fontSize:13, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Cargando tu cartera...</p>`}
+        ${!loaded && !loadError && html`<p style=${{ fontSize:13, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Cargando tu cartera...</p>`}
+        ${loadError && html`
+          <div style=${{ padding:'2rem 1.25rem', textAlign:'center' }}>
+            <p style=${{ fontSize:13.5, color:C.danger, lineHeight:1.6, marginBottom:14 }}>${loadError}</p>
+            <button onClick=${cargarDesdeFirestore} style=${{ padding:'10px 20px', borderRadius:9, border:'none', background:C.accent, color:'#0A1512', fontSize:13.5, fontWeight:600 }}>Reintentar</button>
+          </div>
+        `}
         ${loaded && tab === 'inicio' && html`<${HomePanel}
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
           assetPieData=${assetPieData} platformPieData=${platformPieData} withDerived=${withDerived} history=${history} lastUpdated=${lastUpdated}
