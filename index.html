@@ -1385,15 +1385,13 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
       `}
 
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
-        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Movimientos</p>
-          ${!modoPresentacion && html`
-            <div style=${{ display:'flex', gap:8 }}>
-              <button onClick=${() => setShowBulk(!showBulk)} style=${{ border:`0.5px solid ${C.border}`, background:'transparent', color:C.inkSoft, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>Pegar varios</button>
-              <button onClick=${() => setShowAdd(!showAdd)} style=${{ border:`1px solid ${C.accent}`, background: showAdd ? C.accentSoft : 'transparent', color:C.accent, borderRadius:7, padding:'6px 10px', fontSize:12.5, fontWeight:500 }}>+ Agregar</button>
-            </div>
-          `}
+          ${!modoPresentacion && html`<button onClick=${() => setShowBulk(!showBulk)} style=${{ border:`0.5px solid ${C.border}`, background:'transparent', color:C.inkSoft, borderRadius:7, padding:'6px 10px', fontSize:12, fontWeight:500 }}>Pegar varios</button>`}
         </div>
+        ${!modoPresentacion && html`
+          <button onClick=${() => setShowAdd(!showAdd)} style=${{ width:'100%', border:'none', background: showAdd ? C.surfaceAlt : C.accent, color: showAdd ? C.accent : '#0A1512', borderRadius:10, padding:'14px', fontSize:15.5, fontWeight:700, marginBottom:8 }}>+ Agregar movimiento</button>
+        `}
         ${showBulk && !modoPresentacion && html`<${BulkMovimientosForm} onApply=${bulkAddMovimientos} onClose=${() => setShowBulk(false)} />`}
         ${showAdd && !modoPresentacion && html`<${AddMovimientoForm} categorias=${categorias} onAdd=${addMovimiento} onCancel=${() => setShowAdd(false)} />`}
 
@@ -1498,6 +1496,7 @@ function App({ user }) {
   // si se pone en true con datos vacíos (por ejemplo, sin conexión) y algo dispara
   // el guardado después, se pisarían los datos reales de la nube con datos vacíos.
   const [loadError, setLoadError] = useState(null);
+  const [esNuevoUsuario, setEsNuevoUsuario] = useState(false);
 
   async function cargarDesdeFirestore() {
     setLoadError(null);
@@ -1513,6 +1512,7 @@ function App({ user }) {
         setDiario(d.diario || []);
         setMetas(d.metas || []);
         setHistory(d.history || []);
+        setEsNuevoUsuario(false);
       } else {
         setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
         setPositions(loadLS('portfolio-posiciones', []));
@@ -1521,6 +1521,7 @@ function App({ user }) {
         setDiario([]);
         setMetas([]);
         setHistory(loadLS('historial-valor', []));
+        setEsNuevoUsuario(true);
       }
       setLoaded(true);
     } catch (e) {
@@ -1536,15 +1537,25 @@ function App({ user }) {
   // Guardado: cada cambio se manda a Firestore (con una pequeña demora para no
   // mandar un pedido por cada tecla). Solo corre si "loaded" es true, es decir,
   // solo después de una carga exitosa.
+  // SEGUNDO SEGURO, independiente del de arriba: si esta cuenta ya tenía datos
+  // (no es la primera vez) y de golpe todo lo que se está por guardar aparece
+  // vacío a la vez, algo salió mal en algún lado — se frena el guardado en vez
+  // de mandarlo, para no repetir lo que ya pasó una vez.
   useEffect(() => {
     if (!loaded) return;
+    const pintaVacio = !esNuevoUsuario && positions.length === 0 && aportes.length === 0 &&
+      movimientos.length === 0 && diario.length === 0 && metas.length === 0 && history.length === 0;
+    if (pintaVacio) {
+      setLiveStatus('Se frenó un guardado automático porque hubiera dejado tu cartera completamente vacía — parece un error, no algo que hayas hecho a propósito. No se tocó nada en la nube. Si de verdad querés vaciarla, avisame.');
+      return;
+    }
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, movimientos, diario, metas, history }).catch((e) => {
         setLiveStatus('No se pudo guardar en la nube: ' + e.message);
       });
     }, 800);
-  }, [targets, positions, aportes, movimientos, diario, metas, history, loaded]);
+  }, [targets, positions, aportes, movimientos, diario, metas, history, loaded, esNuevoUsuario]);
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
