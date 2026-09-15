@@ -1497,15 +1497,21 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
 
 /* ---------- app ---------- */
 function App({ user }) {
+  const cacheKey = 'cache-cartera-' + user.uid;
+  const cacheRef = useRef(undefined);
+  if (cacheRef.current === undefined) cacheRef.current = loadLS(cacheKey, null);
+  const cacheInicial = cacheRef.current;
+
   const [tab, setTab] = useState('inicio');
   const [loaded, setLoaded] = useState(false);
-  const [targets, setTargets] = useState(DEFAULT_TARGETS);
-  const [positions, setPositions] = useState([]);
-  const [aportes, setAportes] = useState([]);
-  const [movimientos, setMovimientos] = useState([]);
-  const [diario, setDiario] = useState([]);
-  const [metas, setMetas] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [mostrandoCache, setMostrandoCache] = useState(() => !!cacheInicial);
+  const [targets, setTargets] = useState(() => (cacheInicial && cacheInicial.targets) || DEFAULT_TARGETS);
+  const [positions, setPositions] = useState(() => (cacheInicial && cacheInicial.positions) || []);
+  const [aportes, setAportes] = useState(() => (cacheInicial && cacheInicial.aportes) || []);
+  const [movimientos, setMovimientos] = useState(() => (cacheInicial && cacheInicial.movimientos) || []);
+  const [diario, setDiario] = useState(() => (cacheInicial && cacheInicial.diario) || []);
+  const [metas, setMetas] = useState(() => (cacheInicial && cacheInicial.metas) || []);
+  const [history, setHistory] = useState(() => (cacheInicial && cacheInicial.history) || []);
   const [showAddTarget, setShowAddTarget] = useState(false);
   const [showAddPosition, setShowAddPosition] = useState(false);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
@@ -1548,29 +1554,31 @@ function App({ user }) {
     try {
       const ref = doc(db, 'usuarios', user.uid);
       const snap = await getDoc(ref);
+      let datos;
       if (snap.exists()) {
         const d = snap.data();
-        setTargets(d.targets || DEFAULT_TARGETS);
-        setPositions(d.positions || []);
-        setAportes(d.aportes || []);
-        setMovimientos(d.movimientos || []);
-        setDiario(d.diario || []);
-        setMetas(d.metas || []);
-        setHistory(d.history || []);
+        datos = {
+          targets: d.targets || DEFAULT_TARGETS, positions: d.positions || [], aportes: d.aportes || [],
+          movimientos: d.movimientos || [], diario: d.diario || [], metas: d.metas || [], history: d.history || [],
+        };
         setEsNuevoUsuario(false);
       } else {
-        setTargets(loadLS('cartera-objetivo', DEFAULT_TARGETS));
-        setPositions(loadLS('portfolio-posiciones', []));
-        setAportes(loadLS('registro-aportes', []));
-        setMovimientos(loadLS('registro-movimientos', []));
-        setDiario([]);
-        setMetas([]);
-        setHistory(loadLS('historial-valor', []));
+        datos = {
+          targets: loadLS('cartera-objetivo', DEFAULT_TARGETS), positions: loadLS('portfolio-posiciones', []),
+          aportes: loadLS('registro-aportes', []), movimientos: loadLS('registro-movimientos', []),
+          diario: [], metas: [], history: loadLS('historial-valor', []),
+        };
         setEsNuevoUsuario(true);
       }
+      setTargets(datos.targets); setPositions(datos.positions); setAportes(datos.aportes);
+      setMovimientos(datos.movimientos); setDiario(datos.diario); setMetas(datos.metas); setHistory(datos.history);
+      saveLS(cacheKey, datos);
+      setMostrandoCache(false);
       setLoaded(true);
     } catch (e) {
-      setLoadError('No se pudo cargar tu cartera desde la nube (' + e.message + '). Revisá tu conexión y tocá "Reintentar" — no se va a guardar nada hasta que la carga funcione, para no pisar tus datos reales.');
+      setLoadError(cacheInicial
+        ? 'No se pudo actualizar desde la nube (' + e.message + '). Mostrando la última versión guardada en este celular — puede no estar 100% al día. No se guarda nada hasta confirmar la versión real.'
+        : 'No se pudo cargar tu cartera desde la nube (' + e.message + '). Revisá tu conexión y tocá "Reintentar" — no se va a guardar nada hasta que la carga funcione, para no pisar tus datos reales.');
     }
   }
 
@@ -1596,7 +1604,10 @@ function App({ user }) {
     }
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      setDoc(doc(db, 'usuarios', user.uid), { targets, positions, aportes, movimientos, diario, metas, history }).catch((e) => {
+      const payload = { targets, positions, aportes, movimientos, diario, metas, history };
+      setDoc(doc(db, 'usuarios', user.uid), payload).then(() => {
+        saveLS(cacheKey, payload);
+      }).catch((e) => {
         setLiveStatus('No se pudo guardar en la nube: ' + e.message);
       });
     }, 800);
@@ -1838,14 +1849,20 @@ function App({ user }) {
       <input ref=${fileInputRef} type="file" accept="application/json" style=${{ display:'none' }} onChange=${handleImportFile} />
 
       <div key=${tab} className="tab-fade" onTouchStart=${handleTouchStart} onTouchEnd=${handleTouchEnd}>
-        ${!loaded && !loadError && html`<p style=${{ fontSize:13, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Cargando tu cartera...</p>`}
-        ${loadError && html`
+        ${!loaded && !mostrandoCache && !loadError && html`<p style=${{ fontSize:13, color:C.inkSoft, textAlign:'center', padding:'2rem 0' }}>Cargando tu cartera...</p>`}
+        ${loadError && !mostrandoCache && html`
           <div style=${{ padding:'2rem 1.25rem', textAlign:'center' }}>
             <p style=${{ fontSize:13.5, color:C.danger, lineHeight:1.6, marginBottom:14 }}>${loadError}</p>
             <button onClick=${cargarDesdeFirestore} style=${{ padding:'10px 20px', borderRadius:9, border:'none', background:C.accent, color:'#0A1512', fontSize:13.5, fontWeight:600 }}>Reintentar</button>
           </div>
         `}
-        ${loaded && tab === 'inicio' && html`<${HomePanel}
+        ${loadError && mostrandoCache && html`
+          <div style=${{ background:'rgba(255,107,91,0.12)', border:`0.5px solid ${C.danger}`, borderRadius:10, padding:'10px 14px', marginBottom:16, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <p style=${{ fontSize:12, color:C.danger, margin:0, lineHeight:1.5 }}>No se pudo actualizar desde la nube — mostrando la última versión guardada en este celular.</p>
+            <button onClick=${cargarDesdeFirestore} style=${{ border:'none', background:C.danger, color:'#0A1512', borderRadius:6, padding:'5px 10px', fontSize:11.5, fontWeight:600, flexShrink:0 }}>Reintentar</button>
+          </div>
+        `}
+        ${(loaded || mostrandoCache) && tab === 'inicio' && html`<${HomePanel}
           totalValue=${totalValue} totalPL=${totalPL} totalPLPct=${totalPLPct} dayChange=${dayChange}
           assetPieData=${assetPieData} platformPieData=${platformPieData} withDerived=${withDerived} history=${history} lastUpdated=${lastUpdated}
           movimientos=${movimientos} comparisonData=${comparisonData}
@@ -1855,7 +1872,7 @@ function App({ user }) {
           onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
         />`}
 
-        ${loaded && tab === 'gestion' && html`<${GestionPanel}
+        ${(loaded || mostrandoCache) && tab === 'gestion' && html`<${GestionPanel}
           targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
           addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
           comparisonData=${comparisonData} withDerived=${withDerived}
@@ -1869,7 +1886,7 @@ function App({ user }) {
           metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta} catalogoSimbolos=${catalogoSimbolos}
         />`}
 
-        ${loaded && tab === 'gastos' && html`<${GastosPanel}
+        ${(loaded || mostrandoCache) && tab === 'gastos' && html`<${GastosPanel}
           movimientos=${movimientos} addMovimiento=${addMovimiento} removeMovimiento=${removeMovimiento} updateMovimiento=${updateMovimiento} bulkAddMovimientos=${bulkAddMovimientos}
           aportes=${aportes} modoPresentacion=${modoPresentacion}
         />`}
