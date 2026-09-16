@@ -1710,6 +1710,7 @@ function App({ user }) {
       if (data.updatedAt) setLastUpdated(new Date(data.updatedAt).toLocaleString('es-AR', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }));
       let msg = `Actualizadas ${updated} posiciones.`;
       if (data.notFound && data.notFound.length) msg += ` Sin precio para: ${data.notFound.join(', ')}.`;
+      if (data.fuentesConError && data.fuentesConError.length) msg += ` ⚠ Fuentes caídas: ${data.fuentesConError.join(' · ')}.`;
       setLiveStatus(msg);
     } catch (e) {
       setLiveStatus('No se pudo conectar con /api/precios: ' + e.message);
