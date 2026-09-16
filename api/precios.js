@@ -7,10 +7,11 @@
 //   - dolarapi.com    -> dólar MEP, para convertir cripto (en USD) a pesos
 //   - api.coingecko.com -> precio de Bitcoin y USDT en dólares
 //
-// IMPORTANTE: son fuentes comunitarias/hobby, no oficiales. Pueden tener demora o algún
-// símbolo que no coincida exactamente. Si ves "Sin precio para: X", lo más probable es
-// que el ticker configurado abajo no sea el que usa la fuente — te muestra parecidos
-// para ayudarte a corregirlo.
+// IMPORTANTE: son fuentes comunitarias/hobby, no oficiales. Pueden tener demora, caerse
+// un rato, o algún símbolo que no coincida exactamente. Por eso cada fuente se pide por
+// separado (no todo junto): si UNA falla, las demás igual traen su precio. Si ves
+// "Sin precio para: X", puede ser el ticker mal configurado (te muestra parecidos) o
+// que esa fuente puntual esté caída (mirá "fuentesConError" en la respuesta).
 
 // Mapa de tickers: para cada activo (tal como lo escribiste en "Cartera objetivo"),
 // indicá el símbolo que hay que buscar. Dejalo vacío si no aplica.
@@ -33,23 +34,38 @@ const TICKERS = {
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
   try {
-    const [cedears, corp, notes, mep, crypto] = await Promise.all([
-      fetchJSON('https://data912.com/live/arg_cedears'),
-      fetchJSON('https://data912.com/live/arg_corp'),
-      fetchJSON('https://data912.com/live/arg_notes'),
-      fetchJSON('https://dolarapi.com/v1/dolares/bolsa'),
-      fetchJSON('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd'),
-    ]);
+    const fuentes = [
+      { key: 'cedears', url: 'https://data912.com/live/arg_cedears' },
+      { key: 'corp', url: 'https://data912.com/live/arg_corp' },
+      { key: 'notes', url: 'https://data912.com/live/arg_notes' },
+      { key: 'mep', url: 'https://dolarapi.com/v1/dolares/bolsa' },
+      { key: 'crypto', url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tether&vs_currencies=usd' },
+    ];
+    const resultados = await Promise.allSettled(fuentes.map(f => fetchJSON(f.url)));
 
+    const datos = {};
+    const fuentesConError = [];
+    resultados.forEach((r, i) => {
+      const { key, url } = fuentes[i];
+      if (r.status === 'fulfilled') {
+        datos[key] = r.value;
+      } else {
+        datos[key] = null;
+        const motivo = (r.reason && r.reason.cause && r.reason.cause.message) || (r.reason && r.reason.message) || String(r.reason);
+        fuentesConError.push(`${key} (${url}): ${motivo}`);
+      }
+    });
+
+    const mep = datos.mep;
     const usdArs = (mep && typeof mep.compra === 'number' && typeof mep.venta === 'number')
       ? (mep.compra + mep.venta) / 2 : null;
-    const bondsPanel = [...(Array.isArray(corp) ? corp : []), ...(Array.isArray(notes) ? notes : [])];
+    const bondsPanel = [...(Array.isArray(datos.corp) ? datos.corp : []), ...(Array.isArray(datos.notes) ? datos.notes : [])];
 
     const prices = {};
     const notFound = [];
 
     for (const [name, symbol] of Object.entries(TICKERS.cedears)) {
-      const row = findBySymbol(cedears, symbol);
+      const row = findBySymbol(datos.cedears, symbol);
       const price = row ? pickPrice(row) : null;
       if (price) prices[name] = price;
       else notFound.push(`${name} (ticker: ${symbol})`);
@@ -64,12 +80,12 @@ module.exports = async function handler(req, res) {
       }
     }
     for (const [name, id] of Object.entries(TICKERS.crypto)) {
-      const usd = crypto && crypto[id] && crypto[id].usd;
+      const usd = datos.crypto && datos.crypto[id] && datos.crypto[id].usd;
       if (usd && usdArs) prices[name] = usd * usdArs;
       else notFound.push(`${name} (falta cotización de ${id} o del dólar MEP)`);
     }
 
-    res.status(200).json({ ok: true, prices, usdArs, notFound, updatedAt: new Date().toISOString() });
+    res.status(200).json({ ok: true, prices, usdArs, notFound, fuentesConError, updatedAt: new Date().toISOString() });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e) });
   }
@@ -77,7 +93,7 @@ module.exports = async function handler(req, res) {
 
 async function fetchJSON(url) {
   const r = await fetch(url, { headers: { 'User-Agent': 'mi-cartera-personal/1.0' } });
-  if (!r.ok) throw new Error(`No se pudo leer ${url} (status ${r.status})`);
+  if (!r.ok) throw new Error(`status ${r.status}`);
   return r.json();
 }
 function findBySymbol(arr, symbol) {
