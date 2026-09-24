@@ -155,6 +155,19 @@ function valorAjustadoHoy(fecha, valor, mensual) {
   return valor * factor;
 }
 
+// Una cartera objetivo es "válida" cuando: tiene al menos un activo con objetivo > 0,
+// y la suma de todos los porcentajes da ~100% (con una tolerancia chica por redondeo).
+// Importante: la sola EXISTENCIA de registros en "targets" no alcanza — por ejemplo,
+// activos que se auto-crearon en 0% al cargar una posición no cuentan como objetivo
+// definido hasta que el usuario les ponga un porcentaje.
+function carteraObjetivoValida(targets) {
+  if (!Array.isArray(targets) || targets.length === 0) return false;
+  const conObjetivo = targets.filter(t => t.target > 0);
+  if (conObjetivo.length === 0) return false;
+  const suma = targets.reduce((s,t) => s + (t.target || 0), 0);
+  return Math.abs(suma - 100) <= 1;
+}
+
 function computeRebalance(targets, actualValueByName, totalValue, aporte) {
   const newTotal = totalValue + aporte;
   const gaps = targets.map(t => {
@@ -202,15 +215,23 @@ function DonutChart({ data, height, onSliceClick }) {
 }
 
 function Sparkline({ points }) {
+  // "points" es un array de { precio, fecha } — como máximo los últimos 14 REGISTROS
+  // de precio que haya en el historial diario para este activo. Importante: no son
+  // necesariamente 14 días de calendario. El historial suma un registro por cada día
+  // que se abre la app (ver el efecto que arma "history" en App), así que si hubo
+  // días sin abrirla, la ventana real puede cubrir más días de calendario que registros
+  // tiene. Por eso se muestra el rango de fechas real en el tooltip (title), en vez de
+  // asumir "14 días".
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
-  const subiendo = points.length > 1 && points[points.length-1] >= points[0];
+  const valores = points.map(p => p.precio);
+  const subiendo = valores.length > 1 && valores[valores.length-1] >= valores[0];
   useEffect(() => {
-    if (!canvasRef.current || points.length < 2) return;
+    if (!canvasRef.current || valores.length < 2) return;
     if (chartRef.current) chartRef.current.destroy();
     chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
       type: 'line',
-      data: { labels: points.map((_,i)=>i), datasets: [{ data: points, borderColor: subiendo ? C.accent : C.danger, borderWidth:1.5, pointRadius:0, tension:0.3, fill:false }] },
+      data: { labels: valores.map((_,i)=>i), datasets: [{ data: valores, borderColor: subiendo ? C.accent : C.danger, borderWidth:1.5, pointRadius:0, tension:0.3, fill:false }] },
       options: {
         responsive:true, maintainAspectRatio:false,
         scales: { x:{ display:false }, y:{ display:false } },
@@ -218,9 +239,10 @@ function Sparkline({ points }) {
       },
     });
     return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [JSON.stringify(points)]);
-  if (points.length < 2) return null;
-  return html`<div style=${{ width:56, height:24, flexShrink:0 }}><canvas ref=${canvasRef}></canvas></div>`;
+  }, [JSON.stringify(valores)]);
+  if (valores.length < 2) return null;
+  const desde = points[0].fecha, hasta = points[points.length-1].fecha;
+  return html`<div title=${`Del ${desde} al ${hasta} (${valores.length} registros de precio guardados)`} style=${{ width:56, height:24, flexShrink:0 }}><canvas ref=${canvasRef}></canvas></div>`;
 }
 
 function ComparisonChart({ data }) {
@@ -248,6 +270,49 @@ function ComparisonChart({ data }) {
     return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [JSON.stringify(data)]);
   return html`<div style=${{ position:'relative', height }}><canvas ref=${canvasRef}></canvas></div>`;
+}
+
+// Tabla de rebalanceo: para cada activo, actual vs. objetivo y la diferencia en
+// puntos porcentuales — sobreponderado (tiene de más) o subponderado (tiene de
+// menos). Es solo la diferencia matemática entre dos distribuciones; no decide
+// ni sugiere qué comprar o vender, eso lo hace por separado "Próximo aporte".
+const TOLERANCIA_REBALANCEO = 2; // puntos porcentuales dentro de los cuales se considera "en línea", no una desviación real
+function RebalanceoTable({ data, objetivoValido }) {
+  if (!objetivoValido) {
+    return html`<p style=${{ fontSize:13, color:C.inkSoft, lineHeight:1.5 }}>Para ver el rebalanceo hace falta una cartera objetivo válida (con al menos un activo y que sume ~100%). Definila en "Cartera objetivo", más arriba.</p>`;
+  }
+  const filas = data
+    .filter(d => d.name !== 'Otros')
+    .map(d => ({ ...d, diferencia: Math.round((d.Actual - d.Objetivo) * 10) / 10 }))
+    .sort((a,b) => Math.abs(b.diferencia) - Math.abs(a.diferencia));
+  if (filas.length === 0) return null;
+  return html`
+    <div>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 60px 60px 70px', gap:6, fontSize:11, color:C.inkFaint, padding:'0 2px 6px', borderBottom:`0.5px solid ${C.border}` }}>
+        <span>Activo</span><span style=${{ textAlign:'right' }}>Actual</span><span style=${{ textAlign:'right' }}>Objetivo</span><span style=${{ textAlign:'right' }}>Diferencia</span>
+      </div>
+      ${filas.map(f => {
+        const enLinea = Math.abs(f.diferencia) <= TOLERANCIA_REBALANCEO;
+        const color = enLinea ? C.accent : (f.diferencia > 0 ? C.danger : C.btc);
+        return html`
+          <div key=${f.name} style=${{ display:'grid', gridTemplateColumns:'1fr 60px 60px 70px', gap:6, fontSize:13, padding:'7px 2px', borderBottom:`0.5px solid ${C.border}`, alignItems:'center' }}>
+            <span style=${{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>${f.name}</span>
+            <span className="mono" style=${{ textAlign:'right', color:C.inkSoft }}>${f.Actual}%</span>
+            <span className="mono" style=${{ textAlign:'right', color:C.inkSoft }}>${f.Objetivo}%</span>
+            <span className="mono" style=${{ textAlign:'right', fontWeight:600, color }}>${f.diferencia>0?'+':''}${f.diferencia}%</span>
+          </div>
+        `;
+      })}
+      <div style=${{ display:'flex', gap:14, marginTop:10, fontSize:11, color:C.inkFaint, flexWrap:'wrap' }}>
+        <span><span style=${{ color:C.danger }}>■</span> sobreponderado (tiene de más)</span>
+        <span><span style=${{ color:C.btc }}>■</span> subponderado (tiene de menos)</span>
+        <span><span style=${{ color:C.accent }}>■</span> en línea (±${TOLERANCIA_REBALANCEO} puntos)</span>
+      </div>
+      <p style=${{ fontSize:11, color:C.inkFaint, margin:'10px 0 0', lineHeight:1.5 }}>
+        Esto muestra la diferencia matemática entre tu cartera real y tu cartera objetivo — no es una recomendación de compra o venta, ni una operación que la aplicación ejecute por vos.
+      </p>
+    </div>
+  `;
 }
 
 function EvolutionChart({ history }) {
@@ -367,10 +432,110 @@ function AddTargetForm({ onAdd, onCancel, catalogo }) {
   `;
 }
 
-function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget, modoPresentacion, catalogoSimbolos }) {
+// "Ruleta" / Activos ideales: ayuda a elegir, de los activos reales que existen
+// (catálogo del mercado argentino traído en /api/catalogo, más cripto), cuáles
+// va a incluir el usuario en su Cartera objetivo — no inventa ningún ticker ni
+// da una recomendación, solo ayuda a no tener que escribir todo a mano. Al
+// confirmar, cada activo elegido se agrega como target con 0% — el usuario
+// define el porcentaje después, en el editor de siempre.
+const CRIPTO_CATALOGO = { label: 'Cripto', simbolos: ['Bitcoin', 'USDT (staking)'] };
+const PLATAFORMA_SUGERIDA_POR_CATEGORIA = { cedears:'IOL', acciones:'IOL', bonos:'IOL', obligaciones:'IOL', notas:'IOL', cripto:'BingX' };
+
+function RuletaActivos({ porCategoria, onConfirm, onCancel }) {
+  const categorias = useMemo(() => ({ ...(porCategoria || {}), cripto: CRIPTO_CATALOGO }), [porCategoria]);
+  const [categoriaActiva, setCategoriaActiva] = useState('cedears');
+  const [busqueda, setBusqueda] = useState('');
+  const [seleccionados, setSeleccionados] = useState(() => new Set());
+
+  const categoriasConDatos = Object.keys(categorias).filter(k => (categorias[k].simbolos || []).length > 0);
+  const listaActual = (categorias[categoriaActiva] && categorias[categoriaActiva].simbolos) || [];
+  const listaFiltrada = busqueda.trim()
+    ? listaActual.filter(s => s.toUpperCase().includes(busqueda.trim().toUpperCase()))
+    : listaActual;
+
+  function toggle(simbolo) {
+    setSeleccionados(prev => {
+      const next = new Set(prev);
+      const key = categoriaActiva + '::' + simbolo;
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function confirmar() {
+    const items = [...seleccionados].map(key => {
+      const [cat, simbolo] = key.split('::');
+      return { name: simbolo, ticker: simbolo, platform: PLATAFORMA_SUGERIDA_POR_CATEGORIA[cat] || PLATFORMS[0], target: 0 };
+    });
+    onConfirm(items);
+  }
+
+  return html`
+    <div style=${{ background:C.surfaceAlt, borderRadius:10, padding:12, marginBottom:12 }}>
+      <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'0 0 10px', lineHeight:1.5 }}>
+        Elegí los activos que vas a incluir en tu cartera objetivo. Es una lista de activos reales del mercado (y cripto), para que no tengas que escribir todo a mano — no es una recomendación de qué comprar. Después vos definís el porcentaje de cada uno.
+      </p>
+      <div style=${{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:10 }}>
+        ${categoriasConDatos.map(k => html`
+          <button key=${k} onClick=${()=>{ setCategoriaActiva(k); setBusqueda(''); }}
+            style=${{ padding:'6px 10px', borderRadius:7, border:`0.5px solid ${categoriaActiva===k?C.accent:C.border}`, background: categoriaActiva===k?C.accentSoft:'transparent', color: categoriaActiva===k?C.accent:C.inkSoft, fontSize:12, fontWeight:500 }}>
+            ${categorias[k].label} (${categorias[k].simbolos.length})
+          </button>
+        `)}
+      </div>
+      <input value=${busqueda} onChange=${e=>setBusqueda(e.target.value)} placeholder="Buscar ticker..."
+        style=${{ width:'100%', padding:'8px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13, marginBottom:8 }} />
+      <div style=${{ maxHeight:220, overflowY:'auto', border:`0.5px solid ${C.border}`, borderRadius:8, padding:'4px 8px' }}>
+        ${listaFiltrada.length === 0 && html`<p style=${{ fontSize:12.5, color:C.inkFaint, padding:'10px 0', textAlign:'center' }}>Sin resultados.</p>`}
+        ${listaFiltrada.map(s => {
+          const key = categoriaActiva + '::' + s;
+          const marcado = seleccionados.has(key);
+          return html`
+            <label key=${s} style=${{ display:'flex', alignItems:'center', gap:8, padding:'6px 2px', fontSize:13, borderBottom:`0.5px solid ${C.border}`, cursor:'pointer' }}>
+              <input type="checkbox" checked=${marcado} onChange=${()=>toggle(s)} />
+              ${s}
+            </label>
+          `;
+        })}
+      </div>
+      <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:10 }}>
+        <span style=${{ fontSize:12, color:C.inkSoft }}>${seleccionados.size} elegido${seleccionados.size===1?'':'s'}</span>
+        <div style=${{ display:'flex', gap:8 }}>
+          <button onClick=${onCancel} style=${{ padding:'8px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cancelar</button>
+          <button onClick=${confirmar} disabled=${seleccionados.size===0} style=${{ padding:'8px 16px', borderRadius:7, border:'none', background: seleccionados.size?C.accent:C.border, color: seleccionados.size?'#0A1512':C.inkFaint, fontSize:13, fontWeight:600 }}>Continuar</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function TargetsEditor({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, addTargetsBulk, removeTarget, updateTargetPct, updateTargetField, renameTarget, modoPresentacion, catalogoSimbolos, catalogoPorCategoria }) {
   const [editingId, setEditingId] = useState(null);
+  const [showRuleta, setShowRuleta] = useState(false);
   const pieData = targets.map((t,i)=>({ name:t.name, value:t.target, colorIndex:i })).filter(d=>d.value>0);
   const sumOff = Math.round(targetSum*10)/10 !== 100;
+
+  // Estado vacío real: todavía no hay NINGÚN activo cargado. Esto es distinto de
+  // "hay activos pero no suman 100%" — ese caso ya arrancó y se muestra el editor
+  // normal con el aviso de la suma.
+  if (targets.length === 0 && !modoPresentacion) {
+    return html`
+      <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.5rem 1.25rem', textAlign:'center' }}>
+        <p style=${{ fontSize:13.5, fontWeight:500, margin:'0 0 6px' }}>Todavía no armaste tu cartera objetivo</p>
+        <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'0 0 16px', lineHeight:1.5 }}>Definí qué porcentaje de tu cartera querés en cada activo, para poder comparar contra tu distribución real y recibir sugerencias de rebalanceo.</p>
+        ${showRuleta
+          ? html`<${RuletaActivos} porCategoria=${catalogoPorCategoria} onConfirm=${(items) => { addTargetsBulk(items); setShowRuleta(false); }} onCancel=${()=>setShowRuleta(false)} />`
+          : html`
+            <div style=${{ display:'flex', gap:8, justifyContent:'center', flexWrap:'wrap' }}>
+              <button onClick=${()=>setShowRuleta(true)} style=${{ padding:'10px 18px', borderRadius:8, border:'none', background:C.accent, color:'#0A1512', fontSize:13.5, fontWeight:600 }}>Iniciar cartera objetivo</button>
+              <button onClick=${()=>setShowAddTarget(true)} style=${{ padding:'10px 18px', borderRadius:8, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13.5 }}>Agregar uno a mano</button>
+            </div>
+          `}
+        ${showAddTarget && !showRuleta && html`<div style=${{ marginTop:14, textAlign:'left' }}><${AddTargetForm} catalogo=${catalogoSimbolos} onAdd=${addTarget} onCancel=${() => setShowAddTarget(false)} /></div>`}
+      </div>
+    `;
+  }
+
   return html`
     <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
       <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
@@ -800,38 +965,132 @@ function ResumenSemanal({ history, movimientos, withDerived }) {
   `;
 }
 
-function computeHealthScore(comparisonData, history) {
-  const actualPcts = (comparisonData || []).map(d => d.Actual || 0);
-  const totalPct = actualPcts.reduce((s,v) => s+v, 0);
-  const hhi = totalPct > 0 ? actualPcts.reduce((s,v) => s + Math.pow(v/totalPct, 2), 0) : 1;
-  const factor1 = Math.round((1 - hhi) * 40);
+// Puntaje de salud de la cartera (0-100). Mide ESTRUCTURA, no rendimiento:
+//   - Diversificación/concentración (peso 45)
+//   - Cumplimiento del objetivo (peso 25)
+//   - Estabilidad (peso 30)
+// El rendimiento (ganancia/pérdida en $ y %) se muestra por separado en otro lado de
+// la app — a propósito NO entra en esta cuenta, porque una cartera bien armada puede
+// atravesar un período negativo de mercado sin que eso signifique que está mal armada.
+//
+// Si algún componente no se puede calcular (por ejemplo, todavía no hay una cartera
+// objetivo válida, o no hay historial suficiente), NO se penaliza con 0 ni se inventa
+// un valor neutral: ese componente queda "no disponible" y su peso se redistribuye
+// proporcionalmente entre los que sí están disponibles. Si no hay NINGÚN componente
+// disponible (por ejemplo, cartera totalmente vacía), el puntaje total es null.
+function computeHealthScoreV2(withDerived, targets, comparisonData, history) {
+  const totalValue = (withDerived || []).reduce((s,p) => s + (p.value || 0), 0);
 
-  const desvios = (comparisonData || []).map(d => Math.abs((d.Actual||0) - (d.Objetivo||0)));
-  const avgDesv = desvios.length ? desvios.reduce((s,v) => s+v, 0) / desvios.length : 0;
-  const factor2 = Math.round(Math.max(0, 30 * (1 - avgDesv/30)));
+  // --- Diversificación / concentración (peso 45) ---
+  // Sobre el valor REAL de cada ACTIVO agrupado (no por fila de posición individual):
+  // dos filas que representan el mismo activo (ej. dos compras de SPY en fechas
+  // distintas) se suman y cuentan como UN activo — se usa el mismo norm() que ya
+  // usa el resto de la app para matchear posiciones y objetivos, no un sistema
+  // nuevo. Esto cambia cómo se agrupa para ESTE cálculo puntual, no cómo se
+  // muestran o guardan las posiciones en ningún otro lado de la app. Nota: esto
+  // NO necesariamente sube el puntaje cuando hay varias filas del mismo activo —
+  // simplemente ahora la concentración se calcula por activo agrupado y no por
+  // fila, así que el resultado puede cambiar en cualquier dirección.
+  // w_i = valor_del_activo / valor_total. HHI = Σ(w_i²). N_efectivo = 1/HHI.
+  //
+  // Curva ABSOLUTA (no depende de cuántos activos tenga el usuario cargados, a
+  // diferencia de la curva anterior que normalizaba contra la cantidad de
+  // posiciones): scoreDiv = 40 × ln(N_efectivo), limitado entre 0 y 100. Con
+  // esta curva, una cartera con más exposiciones efectivas siempre punteja más
+  // alto que una con menos, incluso si ambas están perfectamente repartidas —
+  // ya no empatan en 100 como antes. Calibrada (constante 40) contra estos
+  // puntos de referencia: N_efectivo=1→0, 2→~25, 3→~45, 4→~60, 5→~70, 7→~80,
+  // 10→~90, 15+→100 (capeado desde N_efectivo≈12.2).
+  const K_DIVERSIFICACION = 40;
+  let scoreDiv = null, detalleDiv = null;
+  {
+    const valorPorActivo = {};
+    (withDerived || []).forEach(p => {
+      const key = norm(p.name);
+      if (key) valorPorActivo[key] = (valorPorActivo[key] || 0) + (p.value || 0);
+    });
+    const valoresPositivos = Object.values(valorPorActivo).filter(v => v > 0);
+    const nTotal = valoresPositivos.length;
+    if (totalValue > 0 && nTotal >= 1) {
+      const pesos = valoresPositivos.map(v => v / totalValue);
+      const hhi = pesos.reduce((s,w) => s + w*w, 0);
+      const nEfectivo = hhi > 0 ? 1 / hhi : nTotal;
+      scoreDiv = Math.max(0, Math.min(100, K_DIVERSIFICACION * Math.log(nEfectivo)));
+      detalleDiv = { nTotal, nEfectivo: Math.round(nEfectivo * 100) / 100 };
+    }
+  }
 
-  let factor3 = 15, volSuficiente = false;
+  // --- Cumplimiento del objetivo (peso 25) ---
+  // D = Σ|real_i - objetivo_i| (en puntos porcentuales). Como ambas distribuciones
+  // suman 100%, D máximo posible es 200. score = 100 × (1 - D/200).
+  // No disponible si todavía no hay una cartera objetivo válida (ver carteraObjetivoValida).
+  let scoreObj = null;
+  const objetivoValido = carteraObjetivoValida(targets);
+  if (objetivoValido && comparisonData && comparisonData.length > 0) {
+    const D = comparisonData.reduce((s,d) => s + Math.abs((d.Actual||0) - (d.Objetivo||0)), 0);
+    scoreObj = Math.max(0, Math.min(100, 100 * (1 - D / 200)));
+  }
+
+  // --- Estabilidad (peso 30) ---
+  // Usa el histórico (history[].value e history[].invested, tal como existen hoy en
+  // el código). NO se calcula sobre cambios brutos de "value", porque un aporte nuevo
+  // aumenta el valor sin ser "rendimiento". Se resta el aporte de cada período:
+  //   aporte_t = invested_t - invested_(t-1)
+  //   r_t = (value_t - value_(t-1) - aporte_t) / value_(t-1)
+  // y se mide la dispersión (desvío estándar) de esos rendimientos ajustados.
+  // Curva 0-100: score = 100 - desvío×8 (curva elegida a criterio propio, documentada
+  // acá porque no hay una escala "oficial" para esto — se puede recalibrar si en la
+  // práctica da valores poco representativos).
+  let scoreEst = null, volSuficiente = false;
   if (history && history.length >= 8) {
     const sorted = [...history].sort((a,b) => a.date.localeCompare(b.date));
     const retornos = [];
-    for (let i=1; i<sorted.length; i++) { if (sorted[i-1].value > 0) retornos.push((sorted[i].value - sorted[i-1].value)/sorted[i-1].value*100); }
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i-1], cur = sorted[i];
+      if (prev.value > 0 && typeof prev.invested === 'number' && typeof cur.invested === 'number' && typeof cur.value === 'number') {
+        const aporte = cur.invested - prev.invested;
+        retornos.push((cur.value - prev.value - aporte) / prev.value * 100);
+      }
+    }
     if (retornos.length >= 5) {
-      const media = retornos.reduce((s,v)=>s+v,0)/retornos.length;
-      const varianza = retornos.reduce((s,v)=>s+Math.pow(v-media,2),0)/retornos.length;
-      factor3 = Math.round(Math.max(0, 30 - Math.sqrt(varianza)*6));
+      const media = retornos.reduce((s,v) => s+v, 0) / retornos.length;
+      const varianza = retornos.reduce((s,v) => s + Math.pow(v-media, 2), 0) / retornos.length;
+      const desvio = Math.sqrt(varianza);
+      scoreEst = Math.max(0, Math.min(100, 100 - desvio * 8));
       volSuficiente = true;
     }
   }
-  const total = Math.max(0, Math.min(100, factor1 + factor2 + factor3));
-  return { total, factor1, factor2, factor3, volSuficiente };
+
+  // --- Combinar con redistribución de pesos ---
+  const PESO_DIV = 45, PESO_OBJ = 25, PESO_EST = 30;
+  const componentes = [];
+  if (scoreDiv != null) componentes.push({ score: scoreDiv, peso: PESO_DIV });
+  if (scoreObj != null) componentes.push({ score: scoreObj, peso: PESO_OBJ });
+  if (scoreEst != null) componentes.push({ score: scoreEst, peso: PESO_EST });
+  const pesoDisponible = componentes.reduce((s,c) => s + c.peso, 0);
+  let total = null;
+  if (pesoDisponible > 0) {
+    const suma = componentes.reduce((s,c) => s + c.score * (c.peso / pesoDisponible), 0);
+    total = Math.round(Math.max(0, Math.min(100, suma)));
+  }
+
+  return {
+    total, // null si no se pudo calcular ningún componente (por ejemplo, cartera vacía)
+    scoreDiv, scoreObj, scoreEst, // cada uno en escala 0-100, o null si no disponible
+    puntosDiv: scoreDiv != null ? Math.round(scoreDiv/100*PESO_DIV) : null,
+    puntosObj: scoreObj != null ? Math.round(scoreObj/100*PESO_OBJ) : null,
+    puntosEst: scoreEst != null ? Math.round(scoreEst/100*PESO_EST) : null,
+    objetivoValido, volSuficiente, detalleDiv,
+    huboRedistribucion: pesoDisponible > 0 && pesoDisponible < (PESO_DIV+PESO_OBJ+PESO_EST),
+  };
 }
 
-function HealthScoreCard({ comparisonData, history }) {
+function HealthScoreCard({ withDerived, targets, comparisonData, history }) {
   const [showDetail, setShowDetail] = useState(false);
-  const { total, factor1, factor2, factor3, volSuficiente } = useMemo(() => computeHealthScore(comparisonData, history), [comparisonData, history]);
-  if (!comparisonData || comparisonData.length === 0) return null;
-  const label = total>=80?'Sólida': total>=60?'Bien encaminada': total>=40?'Para revisar':'Desbalanceada';
-  const color = total>=60?C.accent: total>=40?C.btc:C.danger;
+  const r = useMemo(() => computeHealthScoreV2(withDerived, targets, comparisonData, history), [withDerived, targets, comparisonData, history]);
+  if (r.total === null) return null; // cartera vacía: nada que mostrar todavía
+  const label = r.total>=80?'Sólida': r.total>=60?'Bien encaminada': r.total>=40?'Para revisar':'Desbalanceada';
+  const color = r.total>=60?C.accent: r.total>=40?C.btc:C.danger;
   return html`
     <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
       <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -839,16 +1098,26 @@ function HealthScoreCard({ comparisonData, history }) {
         <button onClick=${()=>setShowDetail(!showDetail)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:11, textDecoration:'underline', padding:0 }}>${showDetail ? 'ocultar' : '¿cómo se calcula?'}</button>
       </div>
       <div style=${{ display:'flex', alignItems:'baseline', gap:10, marginTop:6 }}>
-        <p className="serif" style=${{ fontSize:32, fontWeight:500, margin:0, color }}>${total}</p>
+        <p className="serif" style=${{ fontSize:32, fontWeight:500, margin:0, color }}>${r.total}</p>
         <span style=${{ fontSize:13, color:C.inkSoft }}>/100 · ${label}</span>
       </div>
       ${showDetail && html`
         <div style=${{ marginTop:12, display:'flex', flexDirection:'column', gap:6, fontSize:12, color:C.inkSoft }}>
-          <div style=${{ display:'flex', justifyContent:'space-between' }}><span>Diversificación</span><span className="mono">${factor1}/40</span></div>
-          <div style=${{ display:'flex', justifyContent:'space-between' }}><span>Cerca del objetivo</span><span className="mono">${factor2}/30</span></div>
-          <div style=${{ display:'flex', justifyContent:'space-between' }}><span>Estabilidad reciente${volSuficiente ? '' : ' (poco historial todavía)'}</span><span className="mono">${factor3}/30</span></div>
+          <div style=${{ display:'flex', justifyContent:'space-between' }}>
+            <span>Diversificación</span>
+            <span className="mono">${r.puntosDiv != null ? `${r.puntosDiv}/45` : 'no disponible'}</span>
+          </div>
+          <div style=${{ display:'flex', justifyContent:'space-between' }}>
+            <span>Objetivo${r.objetivoValido ? '' : ' (sin cartera objetivo válida)'}</span>
+            <span className="mono">${r.puntosObj != null ? `${r.puntosObj}/25` : 'no disponible'}</span>
+          </div>
+          <div style=${{ display:'flex', justifyContent:'space-between' }}>
+            <span>Estabilidad${r.volSuficiente ? '' : ' (poco historial todavía)'}</span>
+            <span className="mono">${r.puntosEst != null ? `${r.puntosEst}/30` : 'no disponible'}</span>
+          </div>
+          ${r.huboRedistribucion && html`<p style=${{ fontSize:11, color:C.inkFaint, margin:0, lineHeight:1.5 }}>Un componente no disponible no resta puntos — su peso se reparte entre los demás.</p>`}
           <p style=${{ fontSize:11, color:C.inkFaint, marginTop:6, lineHeight:1.5 }}>
-            Es un indicador simple armado con lo que ya tenés cargado, no una medida financiera formal de riesgo. "Estabilidad reciente" se vuelve más precisa con más historial.
+            Esta puntuación analiza la distribución actual de la cartera, su desviación respecto de los objetivos definidos y la estabilidad de su evolución histórica. Es una métrica orientativa propia de esta aplicación y no una medida financiera formal. El rendimiento (cuánto ganaste o perdiste) se muestra aparte, más arriba, y no forma parte de este número.
           </p>
         </div>
       `}
@@ -887,7 +1156,7 @@ function ThrowbackCard({ history, totalValue, fmtMasked }) {
   `;
 }
 
-function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, withDerived, history, movimientos, comparisonData, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, modoPresentacion, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
+function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, platformPieData, withDerived, targets, history, movimientos, comparisonData, lastUpdated, usdArs, showUSD, setShowUSD, hideAmounts, setHideAmounts, modoPresentacion, inflacionMensual, inflacionAnualizada, onExport, onImportClick }) {
   const fmt = (n) => (showUSD && usdArs) ? fmtUSD(n/usdArs) : fmtARS(n);
   const fmtMasked = (n) => hideAmounts ? '•••••••' : fmt(n);
   const accentColor = (dayChange != null && dayChange < 0) ? '#5B9E82' : C.accent;
@@ -984,7 +1253,7 @@ function HomePanel({ totalValue, totalPL, totalPLPct, dayChange, assetPieData, p
         </div>
       </div>
 
-      <div style=${{ gridArea:'health' }}><${HealthScoreCard} comparisonData=${comparisonData||[]} history=${history} /></div>
+      <div style=${{ gridArea:'health' }}><${HealthScoreCard} withDerived=${withDerived} targets=${targets} comparisonData=${comparisonData||[]} history=${history} /></div>
 
       <div style=${{ gridArea:'news' }}><${NewsPanel} /></div>
 
@@ -1068,11 +1337,11 @@ function ChatIA({ contexto }) {
   `;
 }
 
-function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, removeTarget, updateTargetPct, updateTargetField, renameTarget,
+function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, addTarget, addTargetsBulk, removeTarget, updateTargetPct, updateTargetField, renameTarget,
   comparisonData, withDerived, showAddPosition, setShowAddPosition, addPosition, removePosition, updateCurrentPrice, updatePosition,
   showBulkUpdate, setShowBulkUpdate, bulkUpdatePrices, fetchLivePrices, liveStatus, liveLoading,
   aportes, addAporte, removeAporte, totalValue, actualValueByName, modoPresentacion, history,
-  diario, addEntradaDiario, removeEntradaDiario, metas, addMeta, removeMeta, catalogoSimbolos }) {
+  diario, addEntradaDiario, removeEntradaDiario, metas, addMeta, removeMeta, catalogoSimbolos, catalogoPorCategoria }) {
 
   const [aporteMonto, setAporteMonto] = useState('');
   const [editingPosId, setEditingPosId] = useState(null);
@@ -1089,7 +1358,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
       Object.entries(h.precios).forEach(([nname, precio]) => {
         if (typeof precio !== 'number') return;
         if (!byName[nname]) byName[nname] = [];
-        byName[nname].push(precio);
+        byName[nname].push({ precio, fecha: h.date });
       });
     });
     const map = {};
@@ -1111,13 +1380,20 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
   return html`
     <div className="gestion-wrap">
       <${TargetsEditor} targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
-        addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
-        modoPresentacion=${modoPresentacion} catalogoSimbolos=${catalogoSimbolos} />
+        addTarget=${addTarget} addTargetsBulk=${addTargetsBulk} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
+        modoPresentacion=${modoPresentacion} catalogoSimbolos=${catalogoSimbolos} catalogoPorCategoria=${catalogoPorCategoria} />
 
       ${withDerived.length > 0 && html`
         <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 8px' }}>Actual vs. objetivo</p>
           <${ComparisonChart} data=${comparisonData} />
+        </div>
+      `}
+
+      ${withDerived.length > 0 && html`
+        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 10px' }}>Rebalanceo</p>
+          <${RebalanceoTable} data=${comparisonData} objetivoValido=${carteraObjetivoValida(targets)} />
         </div>
       `}
 
@@ -1135,13 +1411,16 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
               `)}
             </div>
           `}
+          <p style=${{ fontSize:11, color:C.inkFaint, margin:'10px 0 0', lineHeight:1.5 }}>
+            Es una sugerencia basada exclusivamente en el rebalanceo matemático de tu cartera (acercar lo real a tu objetivo) — no es una recomendación de inversión, y la aplicación no compra ni ejecuta nada por vos.
+          </p>
         </div>
       `}
 
       ${!modoPresentacion && html`<${ChatIA} contexto=${contextoIA} />`}
 
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 }}>
-        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, gap:8, flexWrap:'wrap' }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:2, gap:8, flexWrap:'wrap' }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Posiciones</p>
           ${!modoPresentacion && html`
             <div style=${{ display:'flex', gap:8 }}>
@@ -1154,6 +1433,9 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
             </div>
           `}
         </div>
+        ${withDerived.some(p => (priceTrends[norm(p.name)]||[]).length >= 2) && html`
+          <p style=${{ fontSize:10.5, color:C.inkFaint, margin:'0 0 8px', lineHeight:1.4 }}>El gráfico chico junto a cada posición muestra hasta los últimos 14 registros de precio guardados (mantené el dedo o el mouse sobre él para ver las fechas exactas) — no son 14 días de calendario garantizados, porque se guarda un registro por cada día que abrís la app.</p>
+        `}
         ${liveStatus && !modoPresentacion && html`<p style=${{ fontSize:12, color:C.inkSoft, marginBottom:10, lineHeight:1.5 }}>${liveStatus}</p>`}
         ${!modoPresentacion && withDerived.length > 0 && html`
           <button onClick=${() => setShowBulkUpdate(!showBulkUpdate)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:12, padding:0, marginBottom:12, textDecoration:'underline' }}>
@@ -1245,7 +1527,7 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
 
 function monthKeyOf(fecha) { return (fecha || '').slice(0,7); }
 
-function AddMovimientoForm({ categorias, onAdd, onCancel }) {
+function AddMovimientoForm({ categorias, onAdd, onAddInversion, onCancel }) {
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
   const [tipo, setTipo] = useState('gasto');
   const [categoria, setCategoria] = useState('');
@@ -1253,10 +1535,14 @@ function AddMovimientoForm({ categorias, onAdd, onCancel }) {
   const [error, setError] = useState('');
   function submit() {
     const m = parseFloat(monto);
-    if (!categoria.trim()) return setError('Poné una categoría');
+    if (tipo !== 'inversion' && !categoria.trim()) return setError('Poné una categoría');
     if (!(m > 0)) return setError('El monto tiene que ser mayor a 0');
     setError('');
-    onAdd({ fecha, tipo, categoria: categoria.trim(), monto: m });
+    if (tipo === 'inversion') {
+      onAddInversion({ fecha, monto: m });
+    } else {
+      onAdd({ fecha, tipo, categoria: categoria.trim(), monto: m });
+    }
     setCategoria(''); setMonto('');
   }
   const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
@@ -1269,13 +1555,16 @@ function AddMovimientoForm({ categorias, onAdd, onCancel }) {
           <select style=${inputStyle} value=${tipo} onChange=${e=>setTipo(e.target.value)}>
             <option value="ingreso">Ingreso</option>
             <option value="gasto">Gasto</option>
+            <option value="inversion">Inversión</option>
           </select>
         </label>
       </div>
-      <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Categoría
-        <input style=${inputStyle} list="categorias-existentes" value=${categoria} onChange=${e=>setCategoria(e.target.value)} placeholder="Ej: Nafta, Sueldo, Gimnasio" />
-        <datalist id="categorias-existentes">${categorias.map(c=>html`<option key=${c} value=${c} />`)}</datalist>
-      </label>
+      ${tipo === 'inversion'
+        ? html`<p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:10, lineHeight:1.5 }}>Esto se guarda como un aporte a tu cartera (mismo lugar que "Registro de aportes" en Gestión) — no se cuenta dos veces.</p>`
+        : html`<label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Categoría
+            <input style=${inputStyle} list="categorias-existentes" value=${categoria} onChange=${e=>setCategoria(e.target.value)} placeholder="Ej: Nafta, Sueldo, Gimnasio" />
+            <datalist id="categorias-existentes">${categorias.map(c=>html`<option key=${c} value=${c} />`)}</datalist>
+          </label>`}
       <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Monto (ARS)<input style=${inputStyle} type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} /></label>
       ${error && html`<p style=${{ fontSize:12, color:C.danger, marginTop:8 }}>${error}</p>`}
       <div style=${{ display:'flex', gap:8, marginTop:12 }}>
@@ -1333,7 +1622,7 @@ function BulkMovimientosForm({ onApply, onClose }) {
   `;
 }
 
-function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovimiento, bulkAddMovimientos, aportes, modoPresentacion }) {
+function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovimiento, bulkAddMovimientos, aportes, addAporte, removeAporte, modoPresentacion }) {
   const [monthKey, setMonthKey] = useState(() => {
     const fechas = [...movimientos.map(m => m.fecha), ...aportes.map(a => a.fecha)].filter(Boolean).sort();
     return fechas.length ? monthKeyOf(fechas[fechas.length - 1]) : new Date().toISOString().slice(0,7);
@@ -1377,9 +1666,19 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
   const movimientosDelMes = useMemo(() =>
     movimientos.filter(m => monthKeyOf(m.fecha)===monthKey).sort((a,b)=>b.fecha.localeCompare(a.fecha))
   , [movimientos, monthKey]);
-  const movimientosVisibles = mostrarTodos ? movimientosDelMes : movimientosDelMes.slice(0, 10);
 
   const aportesDelMes = useMemo(() => aportes.filter(a => monthKeyOf(a.fecha)===monthKey), [aportes, monthKey]);
+
+  // Lista combinada para mostrar en "Movimientos": los movimientos reales (ingreso/gasto)
+  // más los aportes del mes, mostrados como filas de tipo "inversión" de solo lectura.
+  // No se crea ningún registro nuevo para esto — es la MISMA información que "Registro
+  // de aportes" en Gestión, solo mostrada acá también, para que no haya que buscarla en
+  // otro lado ni se cuente dos veces en ningún cálculo.
+  const listaCombinadaDelMes = useMemo(() => {
+    const filasInversion = aportesDelMes.map(a => ({ id: 'aporte-'+a.id, fecha: a.fecha, tipo: 'inversion', categoria: 'inversión', monto: a.monto, esAporte: true, aporteId: a.id }));
+    return [...movimientosDelMes, ...filasInversion].sort((a,b) => b.fecha.localeCompare(a.fecha));
+  }, [movimientosDelMes, aportesDelMes]);
+  const movimientosVisibles = mostrarTodos ? listaCombinadaDelMes : listaCombinadaDelMes.slice(0, 10);
 
   const flujoPieData = useMemo(() => {
     const items = [
@@ -1437,7 +1736,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
           <button onClick=${() => setShowAdd(!showAdd)} style=${{ width:'100%', border:'none', background: showAdd ? C.surfaceAlt : C.accent, color: showAdd ? C.accent : '#0A1512', borderRadius:10, padding:'14px', fontSize:15.5, fontWeight:700, marginBottom:8 }}>+ Agregar movimiento</button>
         `}
         ${showBulk && !modoPresentacion && html`<${BulkMovimientosForm} onApply=${bulkAddMovimientos} onClose=${() => setShowBulk(false)} />`}
-        ${showAdd && !modoPresentacion && html`<${AddMovimientoForm} categorias=${categorias} onAdd=${addMovimiento} onCancel=${() => setShowAdd(false)} />`}
+        ${showAdd && !modoPresentacion && html`<${AddMovimientoForm} categorias=${categorias} onAdd=${addMovimiento} onAddInversion=${addAporte} onCancel=${() => setShowAdd(false)} />`}
 
         ${aportesDelMes.length > 0 && html`
           <div style=${{ marginBottom:8 }}>
@@ -1450,22 +1749,27 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
           </div>
         `}
 
-        ${movimientosDelMes.length === 0 && !showAdd && !showBulk && html`
+        ${listaCombinadaDelMes.length === 0 && !showAdd && !showBulk && html`
           <p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', padding:'1.5rem 0' }}>No hay movimientos cargados para este mes.</p>
         `}
         ${movimientosVisibles.map(m => html`
           <div key=${m.id} style=${{ padding:'9px 0', borderTop:`0.5px solid ${C.border}` }}>
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-              <div style=${{ flex:1, cursor: modoPresentacion ? 'default' : 'pointer' }} onClick=${!modoPresentacion ? (() => setEditingId(editingId===m.id ? null : m.id)) : undefined}>
-                <p style=${{ fontSize:13.5, margin:0 }}>${displayCat(m.categoria)}${!modoPresentacion ? html`<span style=${{ color:C.inkFaint }}> ✎</span>` : ''}</p>
-                <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso' ? 'Ingreso' : 'Gasto'} · ${m.fecha}</span>
+              <div style=${{ flex:1, cursor: (modoPresentacion || m.esAporte) ? 'default' : 'pointer' }}
+                onClick=${(!modoPresentacion && !m.esAporte) ? (() => setEditingId(editingId===m.id ? null : m.id)) : undefined}>
+                <p style=${{ fontSize:13.5, margin:0 }}>${displayCat(m.categoria)}${(!modoPresentacion && !m.esAporte) ? html`<span style=${{ color:C.inkFaint }}> ✎</span>` : ''}</p>
+                <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : m.tipo==='inversion' ? C.btc : C.danger }}>
+                  ${m.tipo==='ingreso' ? 'Ingreso' : m.tipo==='inversion' ? 'Inversión' : 'Gasto'} · ${m.fecha}${m.esAporte ? ' · desde Registro de aportes' : ''}
+                </span>
               </div>
               <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
-                <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : C.danger }}>${m.tipo==='ingreso'?'+':'−'} ${fmtARS(m.monto)}</span>
-                ${!modoPresentacion && html`<button onClick=${() => removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>`}
+                <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : m.tipo==='inversion' ? C.btc : C.danger }}>
+                  ${m.tipo==='gasto' ? '−' : '+'} ${fmtARS(m.monto)}
+                </span>
+                ${!modoPresentacion && html`<button onClick=${() => m.esAporte ? removeAporte(m.aporteId) : removeMovimiento(m.id)} style=${{ border:'none', background:'none', color:C.inkFaint, fontSize:14, padding:4 }}>✕</button>`}
               </div>
             </div>
-            ${editingId===m.id && !modoPresentacion && html`
+            ${editingId===m.id && !modoPresentacion && !m.esAporte && html`
               <div style=${{ display:'flex', flexDirection:'column', gap:8, marginTop:8 }}>
                 <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <input type="date" defaultValue=${m.fecha} onBlur=${e=>updateMovimiento(m.id, { fecha: e.target.value })}
@@ -1485,9 +1789,9 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
             `}
           </div>
         `)}
-        ${movimientosDelMes.length > 10 && html`
+        ${listaCombinadaDelMes.length > 10 && html`
           <button onClick=${()=>setMostrarTodos(!mostrarTodos)} style=${{ display:'block', width:'100%', textAlign:'center', border:'none', background:'none', color:C.accent, fontSize:12.5, padding:'10px 0 0' }}>
-            ${mostrarTodos ? '▴ Ver menos' : `▾ Ver los ${movimientosDelMes.length - 10} restantes`}
+            ${mostrarTodos ? '▴ Ver menos' : `▾ Ver los ${listaCombinadaDelMes.length - 10} restantes`}
           </button>
         `}
       </div>
@@ -1523,6 +1827,7 @@ function App({ user }) {
   const [modoPresentacion, setModoPresentacion] = useState(false);
   const [inflacionMensual, setInflacionMensual] = useState([]);
   const [catalogoSimbolos, setCatalogoSimbolos] = useState([]);
+  const [catalogoPorCategoria, setCatalogoPorCategoria] = useState({});
   const [inflacionAnualizada, setInflacionAnualizada] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [frase] = useState(() => FRASES[Math.floor(Math.random()*FRASES.length)]);
@@ -1563,8 +1868,14 @@ function App({ user }) {
         };
         setEsNuevoUsuario(false);
       } else {
+        // Usuario nuevo de verdad: si este navegador tiene datos viejos guardados de
+        // antes de que existiera el login (localStorage, versión previa de la app),
+        // se migran — eso sigue siendo válido. Pero si no hay nada, arranca con la
+        // cartera objetivo VACÍA (antes heredaba por defecto la cartera personal
+        // armada originalmente para otro usuario, lo cual no tiene sentido para una
+        // cuenta nueva) — así el flujo de "Iniciar cartera objetivo" tiene sentido.
         datos = {
-          targets: loadLS('cartera-objetivo', DEFAULT_TARGETS), positions: loadLS('portfolio-posiciones', []),
+          targets: loadLS('cartera-objetivo', []), positions: loadLS('portfolio-posiciones', []),
           aportes: loadLS('registro-aportes', []), movimientos: loadLS('registro-movimientos', []),
           diario: [], metas: [], history: loadLS('historial-valor', []),
         };
@@ -1604,6 +1915,7 @@ function App({ user }) {
     }
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
       const payload = { targets, positions, aportes, movimientos, diario, metas, history };
       setDoc(doc(db, 'usuarios', user.uid), payload).then(() => {
         saveLS(cacheKey, payload);
@@ -1612,6 +1924,39 @@ function App({ user }) {
       });
     }, 800);
   }, [targets, positions, aportes, movimientos, diario, metas, history, loaded, esNuevoUsuario]);
+
+  // Guardado forzado al segundo plano o al cerrar: si el usuario carga algo (por
+  // ejemplo, una meta) y cierra la app o la manda a segundo plano antes de que
+  // pasen los 800ms de espera de arriba, ese guardado pendiente se perdía sin
+  // llegar nunca a Firestore. Esto lo evita: si hay un guardado en espera, lo
+  // manda de inmediato en cuanto la app deja de estar visible.
+  const ultimoPayloadRef = useRef(null);
+  useEffect(() => {
+    ultimoPayloadRef.current = {
+      payload: { targets, positions, aportes, movimientos, diario, metas, history },
+      esNuevoUsuario,
+    };
+  });
+  useEffect(() => {
+    function flush() {
+      if (!saveTimer.current || !loaded) return;
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      const { payload, esNuevoUsuario: nuevo } = ultimoPayloadRef.current;
+      const pintaVacio = !nuevo && payload.positions.length === 0 && payload.aportes.length === 0 &&
+        payload.movimientos.length === 0 && payload.diario.length === 0 && payload.metas.length === 0 && payload.history.length === 0;
+      if (pintaVacio) return;
+      setDoc(doc(db, 'usuarios', user.uid), payload).then(() => saveLS(cacheKey, payload)).catch(() => {});
+    }
+    function onVisibilityChange() { if (document.visibilityState === 'hidden') flush(); }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [loaded, user.uid]);
+
 
   const targetSum = targets.reduce((s,t) => s + t.target, 0);
 
@@ -1639,40 +1984,58 @@ function App({ user }) {
 
   useEffect(() => { saveLS('ocultar-montos', hideAmounts); }, [hideAmounts]);
 
-  function addTarget(t) { setTargets([...targets, { ...t, id:'c'+Date.now() }]); setShowAddTarget(false); }
-  function removeTarget(id) { setTargets(targets.filter(t => t.id !== id)); }
-  function updateTargetPct(id, val) { setTargets(targets.map(t => t.id === id ? { ...t, target: val } : t)); }
-  function updateTargetField(id, field, value) { setTargets(targets.map(t => t.id === id ? { ...t, [field]: value } : t)); }
+  // ID único sin riesgo de colisión: Date.now() solo no alcanza si dos elementos
+  // se crean en el mismo milisegundo (por ejemplo, un doble-tap accidental, o un
+  // alta en bloque) — eso podía hacer que dos ítems terminaran con el mismo id.
+  function newId(prefix) { return prefix + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+  // IMPORTANTE (corrección de un bug real de pérdida de datos en "Metas propias",
+  // y del mismo riesgo latente en el resto de las listas): todas estas funciones
+  // usan la forma FUNCIONAL de los setState (setX(prev => ...)) en vez de leer la
+  // variable del cierre (closure) directamente. Si dos altas/bajas se disparan
+  // muy seguidas (por ejemplo, un doble toque en el botón desde el celular) antes
+  // de que React vuelva a renderizar, la forma no funcional podía leer una copia
+  // vieja del arreglo y la segunda escritura pisaba/perdía la primera en silencio.
+  // La forma funcional siempre parte del estado más reciente, así que ese
+  // escenario ya no puede perder datos.
+  function addTarget(t) { setTargets(prev => [...prev, { ...t, id:newId('c') }]); setShowAddTarget(false); }
+  function addTargetsBulk(items) {
+    if (!items || items.length === 0) return;
+    setTargets(prev => [...prev, ...items.map((t,i) => ({ ...t, id:newId('c'+i+'-') }))]);
+  }
+  function removeTarget(id) { setTargets(prev => prev.filter(t => t.id !== id)); }
+  function updateTargetPct(id, val) { setTargets(prev => prev.map(t => t.id === id ? { ...t, target: val } : t)); }
+  function updateTargetField(id, field, value) { setTargets(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t)); }
   function renameTarget(id, newName) {
     const old = targets.find(t => t.id === id);
     const trimmed = (newName || '').trim();
     if (!old || !trimmed || trimmed === old.name) return;
-    setTargets(targets.map(t => t.id === id ? { ...t, name: trimmed } : t));
-    setPositions(positions.map(p => norm(p.name) === norm(old.name) ? { ...p, name: trimmed } : p));
+    setTargets(prev => prev.map(t => t.id === id ? { ...t, name: trimmed } : t));
+    setPositions(prev => prev.map(p => norm(p.name) === norm(old.name) ? { ...p, name: trimmed } : p));
   }
 
-  function addPosition(p) { setPositions([...positions, { ...p, id:'p'+Date.now() }]); setShowAddPosition(false); }
-  function removePosition(id) { setPositions(positions.filter(p => p.id !== id)); }
-  function updateCurrentPrice(id, val) { setPositions(positions.map(p => p.id === id ? { ...p, currentPrice: val } : p)); }
-  function updatePosition(id, patch) { setPositions(positions.map(p => p.id === id ? { ...p, ...patch } : p)); }
+  function addPosition(p) { setPositions(prev => [...prev, { ...p, id:newId('p') }]); setShowAddPosition(false); }
+  function removePosition(id) { setPositions(prev => prev.filter(p => p.id !== id)); }
+  function updateCurrentPrice(id, val) { setPositions(prev => prev.map(p => p.id === id ? { ...p, currentPrice: val } : p)); }
+  function updatePosition(id, patch) { setPositions(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p)); }
 
-  function addAporte(a) { setAportes([...aportes, { ...a, id:'a'+Date.now() }]); }
-  function removeAporte(id) { setAportes(aportes.filter(a => a.id !== id)); }
+  function addAporte(a) { setAportes(prev => [...prev, { ...a, id:newId('a') }]); }
+  function removeAporte(id) { setAportes(prev => prev.filter(a => a.id !== id)); }
 
-  function addMovimiento(m) { setMovimientos([...movimientos, { ...m, categoria: norm(m.categoria), id:'m'+Date.now() }]); }
-  function removeMovimiento(id) { setMovimientos(movimientos.filter(m => m.id !== id)); }
+  function addMovimiento(m) { setMovimientos(prev => [...prev, { ...m, categoria: norm(m.categoria), id:newId('m') }]); }
+  function removeMovimiento(id) { setMovimientos(prev => prev.filter(m => m.id !== id)); }
   function updateMovimiento(id, patch) {
-    setMovimientos(movimientos.map(m => m.id === id ? { ...m, ...patch, categoria: norm(patch.categoria !== undefined ? patch.categoria : m.categoria) } : m));
+    setMovimientos(prev => prev.map(m => m.id === id ? { ...m, ...patch, categoria: norm(patch.categoria !== undefined ? patch.categoria : m.categoria) } : m));
   }
   function bulkAddMovimientos(nuevos) {
-    setMovimientos([...movimientos, ...nuevos.map((n,i) => ({ ...n, categoria: norm(n.categoria), id:'m'+Date.now()+'-'+i }))]);
+    setMovimientos(prev => [...prev, ...nuevos.map((n,i) => ({ ...n, categoria: norm(n.categoria), id:newId('m'+i+'-') }))]);
   }
 
-  function addEntradaDiario(e) { setDiario([...diario, { ...e, id:'d'+Date.now() }]); }
-  function removeEntradaDiario(id) { setDiario(diario.filter(e => e.id !== id)); }
+  function addEntradaDiario(e) { setDiario(prev => [...prev, { ...e, id:newId('d') }]); }
+  function removeEntradaDiario(id) { setDiario(prev => prev.filter(e => e.id !== id)); }
 
-  function addMeta(m) { setMetas([...metas, { ...m, id:'g'+Date.now() }]); }
-  function removeMeta(id) { setMetas(metas.filter(m => m.id !== id)); }
+  function addMeta(m) { setMetas(prev => [...prev, { ...m, id:newId('g') }]); }
+  function removeMeta(id) { setMetas(prev => prev.filter(m => m.id !== id)); }
 
   function bulkUpdatePrices(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -1729,7 +2092,7 @@ function App({ user }) {
       if (data.ok) { setInflacionMensual(data.mensual || []); setInflacionAnualizada(data.anualizada); }
     }).catch(() => {});
     fetch('/api/catalogo').then(r => r.json()).then(data => {
-      if (data.ok) setCatalogoSimbolos(data.simbolos || []);
+      if (data.ok) { setCatalogoSimbolos(data.simbolos || []); setCatalogoPorCategoria(data.porCategoria || {}); }
     }).catch(() => {});
     // eslint-disable-next-line
   }, [loaded]);
@@ -1875,7 +2238,7 @@ function App({ user }) {
 
         ${(loaded || mostrandoCache) && tab === 'gestion' && html`<${GestionPanel}
           targets=${targets} targetSum=${targetSum} showAddTarget=${showAddTarget} setShowAddTarget=${setShowAddTarget}
-          addTarget=${addTarget} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
+          addTarget=${addTarget} addTargetsBulk=${addTargetsBulk} removeTarget=${removeTarget} updateTargetPct=${updateTargetPct} updateTargetField=${updateTargetField} renameTarget=${renameTarget}
           comparisonData=${comparisonData} withDerived=${withDerived}
           showAddPosition=${showAddPosition} setShowAddPosition=${setShowAddPosition}
           addPosition=${addPosition} removePosition=${removePosition} updateCurrentPrice=${updateCurrentPrice} updatePosition=${updatePosition}
@@ -1884,12 +2247,12 @@ function App({ user }) {
           aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte}
           totalValue=${totalValue} actualValueByName=${actualValueByName} modoPresentacion=${modoPresentacion} history=${history}
           diario=${diario} addEntradaDiario=${addEntradaDiario} removeEntradaDiario=${removeEntradaDiario}
-          metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta} catalogoSimbolos=${catalogoSimbolos}
+          metas=${metas} addMeta=${addMeta} removeMeta=${removeMeta} catalogoSimbolos=${catalogoSimbolos} catalogoPorCategoria=${catalogoPorCategoria}
         />`}
 
         ${(loaded || mostrandoCache) && tab === 'gastos' && html`<${GastosPanel}
           movimientos=${movimientos} addMovimiento=${addMovimiento} removeMovimiento=${removeMovimiento} updateMovimiento=${updateMovimiento} bulkAddMovimientos=${bulkAddMovimientos}
-          aportes=${aportes} modoPresentacion=${modoPresentacion}
+          aportes=${aportes} addAporte=${addAporte} removeAporte=${removeAporte} modoPresentacion=${modoPresentacion}
         />`}
       </div>
 
