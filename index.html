@@ -1527,23 +1527,97 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
 
 function monthKeyOf(fecha) { return (fecha || '').slice(0,7); }
 
+/* ---------- categorías de gastos ---------- */
+// Categoría → Subcategoría para los movimientos de tipo "gasto".
+// Se guardan en DOS campos NUEVOS y OPCIONALES del mismo objeto movimiento (dentro del
+// mismo array "movimientos" de siempre, sin colección nueva ni estructura paralela):
+//   categoriaGasto    → ej. "Comida"
+//   subcategoriaGasto → ej. "Restaurante"
+// No se reutiliza el campo "categoria" que ya existía porque ese campo YA tiene datos
+// reales con otro significado: es el texto libre que se venía cargando ("nafta",
+// "sueldo", "gimnasio"...), y lo usan también los ingresos. Ese texto libre se sigue
+// guardando igual en "categoria" y para los gastos se muestra como "Descripción"
+// (opcional). Así ningún dato histórico cambia de significado y no hace falta migrar
+// nada en Firestore: un gasto viejo simplemente no tiene categoriaGasto → "Sin categoría".
+const CATEGORIAS_GASTO = [
+  { nombre:'Comida', subcategorias:['Supermercado','Restaurante','Delivery','Otros'] },
+  { nombre:'Transporte', subcategorias:['Combustible','Transporte público','Apps / remis','Mantenimiento','Otros'] },
+  { nombre:'Vivienda', subcategorias:['Alquiler','Expensas','Luz','Agua','Gas','Internet','Otros'] },
+  { nombre:'Entretenimiento', subcategorias:['Salidas','Streaming','Juegos','Eventos','Otros'] },
+  { nombre:'Compras', subcategorias:['Ropa','Electrónica','Hogar','Otros'] },
+  { nombre:'Salud y bienestar', subcategorias:['Farmacia','Consultas','Gimnasio','Deporte','Otros'] },
+  { nombre:'Educación', subcategorias:['Universidad','Cursos','Libros','Materiales','Otros'] },
+  { nombre:'Servicios / suscripciones', subcategorias:['Software','Streaming','Telefonía','Otros'] },
+  { nombre:'Impuestos y obligaciones', subcategorias:['Impuestos','Tasas','Trámites','Otros'] },
+  { nombre:'Otros', subcategorias:['Otros'] },
+];
+const SIN_CATEGORIA = 'Sin categoría';
+const SIN_SUBCATEGORIA = 'Sin subcategoría';
+function subcategoriasDe(nombre) { const c = CATEGORIAS_GASTO.find(c => c.nombre === nombre); return c ? c.subcategorias : []; }
+function categoriaDeGasto(m) { return (m && m.categoriaGasto) || SIN_CATEGORIA; }
+function subcategoriaDeGasto(m) {
+  if (m && m.categoriaGasto) return m.subcategoriaGasto || SIN_SUBCATEGORIA;
+  // Gasto histórico sin categoría: se desglosa por su texto original, tal cual lo
+  // cargó el usuario — no se le inventa ninguna categoría ni subcategoría.
+  return displayCat(m && m.categoria) || 'Sin descripción';
+}
+// Título a mostrar en la lista de movimientos.
+function tituloMovimiento(m) {
+  if (m.tipo === 'gasto' && m.categoriaGasto) return m.categoriaGasto + (m.subcategoriaGasto ? ' › ' + m.subcategoriaGasto : '');
+  return displayCat(m.categoria) || 'Sin descripción';
+}
+
+// Selectores Categoría + Subcategoría (usados al cargar, al pegar varios y al editar).
+// onChange recibe siempre { categoriaGasto, subcategoriaGasto }. Si la categoría tiene
+// una sola subcategoría posible, se elige sola (es la única opción, no se inventa nada).
+function CategoriaGastoSelects({ categoria, subcategoria, onChange, inputStyle, labelStyle, permitirVacio }) {
+  const subs = subcategoriasDe(categoria);
+  function cambiarCategoria(v) { const s = subcategoriasDe(v); onChange({ categoriaGasto: v, subcategoriaGasto: s.length === 1 ? s[0] : '' }); }
+  return html`
+    <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+      <label style=${labelStyle}>Categoría
+        <select style=${inputStyle} value=${categoria} onChange=${e=>cambiarCategoria(e.target.value)}>
+          <option value="">${permitirVacio ? SIN_CATEGORIA : 'Elegí…'}</option>
+          ${CATEGORIAS_GASTO.map(c => html`<option key=${c.nombre} value=${c.nombre}>${c.nombre}</option>`)}
+          ${categoria && !CATEGORIAS_GASTO.some(c => c.nombre === categoria) ? html`<option value=${categoria}>${categoria}</option>` : ''}
+        </select>
+      </label>
+      <label style=${labelStyle}>Subcategoría
+        <select style=${inputStyle} value=${subcategoria} disabled=${!categoria || subs.length === 0} onChange=${e=>onChange({ categoriaGasto: categoria, subcategoriaGasto: e.target.value })}>
+          <option value="">Elegí…</option>
+          ${subs.map(s => html`<option key=${s} value=${s}>${s}</option>`)}
+          ${subcategoria && !subs.includes(subcategoria) ? html`<option value=${subcategoria}>${subcategoria}</option>` : ''}
+        </select>
+      </label>
+    </div>
+  `;
+}
+
 function AddMovimientoForm({ categorias, onAdd, onAddInversion, onCancel }) {
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0,10));
   const [tipo, setTipo] = useState('gasto');
+  // "categoria" es el texto libre de siempre: "Concepto" para ingresos, "Descripción" (opcional) para gastos.
   const [categoria, setCategoria] = useState('');
+  const [catGasto, setCatGasto] = useState({ categoriaGasto:'', subcategoriaGasto:'' });
   const [monto, setMonto] = useState('');
   const [error, setError] = useState('');
   function submit() {
     const m = parseFloat(monto);
-    if (tipo !== 'inversion' && !categoria.trim()) return setError('Poné una categoría');
+    if (tipo === 'ingreso' && !categoria.trim()) return setError('Poné un concepto');
+    if (tipo === 'gasto') {
+      if (!catGasto.categoriaGasto) return setError('Elegí una categoría');
+      if (subcategoriasDe(catGasto.categoriaGasto).length > 0 && !catGasto.subcategoriaGasto) return setError('Elegí una subcategoría');
+    }
     if (!(m > 0)) return setError('El monto tiene que ser mayor a 0');
     setError('');
     if (tipo === 'inversion') {
       onAddInversion({ fecha, monto: m });
+    } else if (tipo === 'gasto') {
+      onAdd({ fecha, tipo, categoria: categoria.trim(), categoriaGasto: catGasto.categoriaGasto, subcategoriaGasto: catGasto.subcategoriaGasto, monto: m });
     } else {
       onAdd({ fecha, tipo, categoria: categoria.trim(), monto: m });
     }
-    setCategoria(''); setMonto('');
+    setCategoria(''); setMonto(''); setCatGasto({ categoriaGasto:'', subcategoriaGasto:'' });
   }
   const inputStyle = { width:'100%', padding:'9px 10px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13.5, marginTop:4 };
   const labelStyle = { fontSize:12, color:C.inkSoft, display:'block' };
@@ -1561,8 +1635,10 @@ function AddMovimientoForm({ categorias, onAdd, onAddInversion, onCancel }) {
       </div>
       ${tipo === 'inversion'
         ? html`<p style=${{ fontSize:11.5, color:C.inkFaint, marginTop:10, lineHeight:1.5 }}>Esto se guarda como un aporte a tu cartera (mismo lugar que "Registro de aportes" en Gestión) — no se cuenta dos veces.</p>`
-        : html`<label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Categoría
-            <input style=${inputStyle} list="categorias-existentes" value=${categoria} onChange=${e=>setCategoria(e.target.value)} placeholder="Ej: Nafta, Sueldo, Gimnasio" />
+        : html`
+          ${tipo === 'gasto' && html`<div style=${{ marginTop:10 }}><${CategoriaGastoSelects} categoria=${catGasto.categoriaGasto} subcategoria=${catGasto.subcategoriaGasto} onChange=${setCatGasto} inputStyle=${inputStyle} labelStyle=${labelStyle} /></div>`}
+          <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>${tipo === 'gasto' ? 'Descripción (opcional)' : 'Concepto'}
+            <input style=${inputStyle} list="categorias-existentes" value=${categoria} onChange=${e=>setCategoria(e.target.value)} placeholder=${tipo === 'gasto' ? 'Ej: Cena con amigos, Nafta Clio' : 'Ej: Sueldo, Venta, Reintegro'} />
             <datalist id="categorias-existentes">${categorias.map(c=>html`<option key=${c} value=${c} />`)}</datalist>
           </label>`}
       <label style=${{ ...labelStyle, marginTop:10, display:'block' }}>Monto (ARS)<input style=${inputStyle} type="number" step="any" value=${monto} onChange=${e=>setMonto(e.target.value)} /></label>
@@ -1580,7 +1656,16 @@ function BulkMovimientosForm({ onApply, onClose }) {
   const [tipo, setTipo] = useState('gasto');
   const [text, setText] = useState('');
   const [result, setResult] = useState(null);
+  const [catGasto, setCatGasto] = useState({ categoriaGasto:'', subcategoriaGasto:'' });
+  const [error, setError] = useState('');
   function apply() {
+    // Los gastos nuevos exigen categoría (y subcategoría) — acá se elige una sola para todas las líneas.
+    if (tipo === 'gasto') {
+      if (!catGasto.categoriaGasto) return setError('Elegí una categoría para estos gastos');
+      if (subcategoriasDe(catGasto.categoriaGasto).length > 0 && !catGasto.subcategoriaGasto) return setError('Elegí una subcategoría para estos gastos');
+    }
+    setError('');
+    const extra = tipo === 'gasto' ? { categoriaGasto: catGasto.categoriaGasto, subcategoriaGasto: catGasto.subcategoriaGasto } : {};
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
     let cargados = 0; const invalidas = [];
     const nuevos = [];
@@ -1590,7 +1675,7 @@ function BulkMovimientosForm({ onApply, onClose }) {
       const categoria = m[1].trim();
       const monto = parseFloat(m[2].replace(',', '.'));
       if (!categoria || !(monto > 0)) { invalidas.push(line); return; }
-      nuevos.push({ fecha, tipo, categoria, monto });
+      nuevos.push({ fecha, tipo, categoria, monto, ...extra });
       cargados++;
     });
     if (nuevos.length) onApply(nuevos);
@@ -1610,7 +1695,9 @@ function BulkMovimientosForm({ onApply, onClose }) {
           </select>
         </label>
       </div>
-      <p style=${{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por movimiento: categoría, dos puntos, monto. Todos comparten la fecha y el tipo de arriba.</p>
+      ${tipo === 'gasto' && html`<div style=${{ marginBottom:10 }}><${CategoriaGastoSelects} categoria=${catGasto.categoriaGasto} subcategoria=${catGasto.subcategoriaGasto} onChange=${setCatGasto} inputStyle=${inputStyle} labelStyle=${labelStyle} /></div>`}
+      <p style=${{ fontSize:12, color:C.inkSoft, margin:'0 0 4px', lineHeight:1.5 }}>Una línea por movimiento: ${tipo === 'gasto' ? 'descripción' : 'concepto'}, dos puntos, monto. Todos comparten la fecha, el tipo${tipo === 'gasto' ? ' y la categoría' : ''} de arriba.</p>
+      ${error && html`<p style=${{ fontSize:12, color:C.danger, margin:'0 0 6px' }}>${error}</p>`}
       <textarea value=${text} onChange=${e=>setText(e.target.value)} placeholder=${'gasoil: 90000\nClio rep Fito: 60000\ngimnasio: 41000'}
         style=${{ ...inputStyle, fontFamily:'ui-monospace,monospace', minHeight:110, resize:'vertical', boxSizing:'border-box' }}></textarea>
       ${result && html`<p style=${{ fontSize:12, color: result.invalidas.length ? C.btc : C.accent, marginTop:8 }}>Cargados ${result.cargados} de ${result.total}.${result.invalidas.length>0 ? ` No entendí: ${result.invalidas.join(' · ')}` : ''}</p>`}
@@ -1618,6 +1705,266 @@ function BulkMovimientosForm({ onApply, onClose }) {
         <button onClick=${apply} style=${{ flex:1, padding:'9px', borderRadius:7, border:'none', background:C.accent, color:'#0A1512', fontSize:13, fontWeight:600 }}>Cargar todo</button>
         <button onClick=${onClose} style=${{ padding:'9px 14px', borderRadius:7, border:`0.5px solid ${C.border}`, background:'none', color:C.inkSoft, fontSize:13 }}>Cerrar</button>
       </div>
+    </div>
+  `;
+}
+
+/* ---------- análisis de gastos ---------- */
+// ANALISIS-GASTOS-PURO-INICIO (funciones puras: no leen ni escriben estado, ni Firestore)
+// Todo el análisis trabaja con meses "YYYY-MM" (mismo formato que monthKeyOf) y usa
+// EXCLUSIVAMENTE movimientos con tipo === 'gasto'. Ingresos, aportes/inversiones y
+// cualquier otro tipo quedan afuera. No modifica ningún dato: solo lee y suma.
+const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const MESES_LARGOS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const MAX_SERIES_EVOLUCION = 5; // líneas en el gráfico de evolución; el resto se agrupa en "Resto"
+function mesActualKey() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
+function esMesValido(mk) { return typeof mk === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(mk); }
+function sumarMeses(mk, n) {
+  const [y, m] = mk.split('-').map(Number);
+  const t = y * 12 + (m - 1) + n;
+  return Math.floor(t / 12) + '-' + String((t % 12) + 1).padStart(2, '0');
+}
+function mesesEntre(desde, hasta) {
+  const out = []; let k = desde;
+  while (k <= hasta && out.length < 240) { out.push(k); k = sumarMeses(k, 1); }
+  return out;
+}
+function etiquetaMes(mk, largo) {
+  const [y, m] = mk.split('-');
+  return largo ? `${MESES_LARGOS[+m-1]} ${y}` : `${MESES_CORTOS[+m-1]} ${y.slice(2)}`;
+}
+function etiquetaRango(desde, hasta) {
+  return desde === hasta ? etiquetaMes(desde, true) : `${etiquetaMes(desde, true)} – ${etiquetaMes(hasta, true)}`;
+}
+// Devuelve [desde, hasta] (inclusive). "Últimos 3/6 meses" incluyen el mes actual.
+function rangoPeriodo(periodo, hoyMk, desdeCustom, hastaCustom) {
+  switch (periodo) {
+    case 'mesAnterior': { const k = sumarMeses(hoyMk, -1); return [k, k]; }
+    case 'ult3': return [sumarMeses(hoyMk, -2), hoyMk];
+    case 'ult6': return [sumarMeses(hoyMk, -5), hoyMk];
+    case 'esteAnio': return [hoyMk.slice(0,4) + '-01', hoyMk];
+    case 'personalizado': {
+      let a = esMesValido(desdeCustom) ? desdeCustom : hoyMk;
+      let b = esMesValido(hastaCustom) ? hastaCustom : hoyMk;
+      if (a > b) { const t = a; a = b; b = t; }
+      return [a, b];
+    }
+    default: return [hoyMk, hoyMk]; // 'esteMes'
+  }
+}
+// Período anterior comparable: la misma cantidad de meses, inmediatamente antes.
+function rangoAnterior(desde, hasta) {
+  const n = mesesEntre(desde, hasta).length;
+  return [sumarMeses(desde, -n), sumarMeses(desde, -1)];
+}
+function montoDe(m) { const v = Number(m && m.monto); return isFinite(v) ? v : 0; }
+function gastosDelRango(movimientos, desde, hasta, categoria) {
+  return (movimientos || []).filter(m =>
+    m && m.tipo === 'gasto' && typeof m.fecha === 'string' &&
+    monthKeyOf(m.fecha) >= desde && monthKeyOf(m.fecha) <= hasta &&
+    (categoria === 'todas' || categoriaDeGasto(m) === categoria)
+  );
+}
+// categoria: 'todas' o el nombre de una categoría (incluido SIN_CATEGORIA).
+// Con 'todas' agrupa por categoría; con una categoría elegida, por subcategoría.
+function analizarGastos(movimientos, desde, hasta, categoria) {
+  const meses = mesesEntre(desde, hasta);
+  const gastos = gastosDelRango(movimientos, desde, hasta, categoria);
+  const total = gastos.reduce((s, m) => s + montoDe(m), 0);
+  const cantidad = gastos.length;
+  const promedio = cantidad > 0 ? total / cantidad : 0;
+  const clave = categoria === 'todas' ? categoriaDeGasto : subcategoriaDeGasto;
+  const porGrupo = {};
+  gastos.forEach(m => { const k = clave(m); porGrupo[k] = (porGrupo[k] || 0) + montoDe(m); });
+  const ranking = Object.entries(porGrupo)
+    .map(([nombre, monto]) => ({ nombre, monto, pct: total > 0 ? monto / total * 100 : 0 }))
+    .sort((a, b) => b.monto - a.monto);
+  const totalesPorMes = meses.map(mk => gastos.filter(m => monthKeyOf(m.fecha) === mk).reduce((s, m) => s + montoDe(m), 0));
+  // Evolución: una serie por grupo (los de mayor gasto), el resto sumado en "Resto".
+  const principales = ranking.slice(0, MAX_SERIES_EVOLUCION).map(r => r.nombre);
+  const series = principales.map(nombre => ({
+    nombre,
+    valores: meses.map(mk => gastos.filter(m => monthKeyOf(m.fecha) === mk && clave(m) === nombre).reduce((s, m) => s + montoDe(m), 0)),
+  }));
+  if (ranking.length > MAX_SERIES_EVOLUCION) {
+    series.push({ nombre: 'Resto', valores: meses.map(mk => gastos.filter(m => monthKeyOf(m.fecha) === mk && !principales.includes(clave(m))).reduce((s, m) => s + montoDe(m), 0)) });
+  }
+  return { meses, cantidad, total, promedio, ranking, totalesPorMes, series };
+}
+// ANALISIS-GASTOS-PURO-FIN
+
+function EvolucionGastosChart({ meses, series }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(canvasRef.current.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: meses.map(mk => etiquetaMes(mk, false)),
+        datasets: series.map((s, i) => ({ label: s.nombre, data: s.valores, borderColor: colorFor(i), backgroundColor: colorFor(i), tension: 0.25, pointRadius: 3 })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: { y: { beginAtZero: true, ticks: { color: C.inkSoft, callback: v => fmtARS(v) }, grid: { color: C.border } }, x: { ticks: { color: C.inkSoft }, grid: { display: false } } },
+        plugins: {
+          legend: { position: 'top', labels: { color: C.inkSoft, boxWidth: 10, font: { size: 11 } } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtARS(c.parsed.y)}` } },
+        },
+      },
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [JSON.stringify(meses), JSON.stringify(series)]);
+  return html`<div style=${{ position:'relative', height:240 }}><canvas ref=${canvasRef}></canvas></div>`;
+}
+
+const PERIODOS_GASTO = [
+  { id:'esteMes', label:'Este mes' },
+  { id:'mesAnterior', label:'Mes anterior' },
+  { id:'ult3', label:'Últimos 3 meses' },
+  { id:'ult6', label:'Últimos 6 meses' },
+  { id:'esteAnio', label:'Este año' },
+  { id:'personalizado', label:'Personalizado' },
+];
+
+function AnalisisGastos({ movimientos, aportes }) {
+  const hoyMk = mesActualKey();
+  const [periodo, setPeriodo] = useState('esteMes');
+  const [desdeCustom, setDesdeCustom] = useState(() => sumarMeses(hoyMk, -2));
+  const [hastaCustom, setHastaCustom] = useState(hoyMk);
+  const [categoria, setCategoria] = useState('todas');
+
+  const [desde, hasta] = rangoPeriodo(periodo, hoyMk, desdeCustom, hastaCustom);
+  const [desdeAnt, hastaAnt] = rangoAnterior(desde, hasta);
+
+  // Opciones del filtro: las 10 categorías fijas, más "Sin categoría" (y cualquier otra
+  // categoría guardada que no esté en la lista) solo si aparece en los datos.
+  const opcionesCategoria = useMemo(() => {
+    const extra = new Set();
+    (movimientos || []).forEach(m => { if (m && m.tipo === 'gasto') { const c = categoriaDeGasto(m); if (!CATEGORIAS_GASTO.some(x => x.nombre === c)) extra.add(c); } });
+    return [...CATEGORIAS_GASTO.map(c => c.nombre), ...[...extra].sort()];
+  }, [movimientos]);
+
+  const a = useMemo(() => analizarGastos(movimientos, desde, hasta, categoria), [movimientos, desde, hasta, categoria]);
+  const ant = useMemo(() => analizarGastos(movimientos, desdeAnt, hastaAnt, categoria), [movimientos, desdeAnt, hastaAnt, categoria]);
+
+  // Resumen descriptivo del período (sin filtro de categoría): mismas definiciones que ya
+  // usa el resumen mensual de arriba — ingresos y gastos de "movimientos", invertido de
+  // "aportes". No calcula tasa de ahorro ni toca patrimonio/rendimiento.
+  const flujo = useMemo(() => {
+    const enRango = f => typeof f === 'string' && monthKeyOf(f) >= desde && monthKeyOf(f) <= hasta;
+    return {
+      ingresos: (movimientos || []).filter(m => m && m.tipo === 'ingreso' && enRango(m.fecha)).reduce((s, m) => s + montoDe(m), 0),
+      gastos: (movimientos || []).filter(m => m && m.tipo === 'gasto' && enRango(m.fecha)).reduce((s, m) => s + montoDe(m), 0),
+      invertido: (aportes || []).filter(x => x && enRango(x.fecha)).reduce((s, x) => s + montoDe(x), 0),
+    };
+  }, [movimientos, aportes, desde, hasta]);
+
+  const incluyeMesActual = hasta >= hoyMk && desde <= hoyMk;
+  const variacion = ant.total > 0 ? (a.total - ant.total) / ant.total * 100 : null;
+  const agrupaPor = categoria === 'todas' ? 'categoría' : 'subcategoría';
+  const maxRanking = a.ranking.length ? a.ranking[0].monto : 0;
+  const hayGastosSinCategoria = categoria === SIN_CATEGORIA;
+
+  const card = { background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginTop:16 };
+  const chip = (activo) => ({ padding:'6px 10px', borderRadius:7, border:`0.5px solid ${activo ? C.accent : C.border}`, background: activo ? C.accentSoft : 'transparent', color: activo ? C.accent : C.inkSoft, fontSize:12, fontWeight:500 });
+  const inputStyle = { padding:'6px 8px', borderRadius:7, border:`0.5px solid ${C.border}`, fontSize:13 };
+  const kpiLabel = { fontSize:11.5, color:C.inkSoft, margin:'0 0 3px' };
+
+  return html`
+    <div>
+      <div style=${card}>
+        <p style=${{ fontSize:15, fontWeight:600, margin:'0 0 10px' }}>Análisis de gastos</p>
+        <div style=${{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          ${PERIODOS_GASTO.map(p => html`<button key=${p.id} onClick=${() => setPeriodo(p.id)} style=${chip(periodo === p.id)}>${p.label}</button>`)}
+        </div>
+        ${periodo === 'personalizado' && html`
+          <div style=${{ display:'flex', gap:10, marginTop:10, flexWrap:'wrap', alignItems:'center', fontSize:12, color:C.inkSoft }}>
+            <label>Desde <input type="month" className="mono" value=${desdeCustom} onChange=${e => setDesdeCustom(e.target.value)} style=${inputStyle} /></label>
+            <label>Hasta <input type="month" className="mono" value=${hastaCustom} onChange=${e => setHastaCustom(e.target.value)} style=${inputStyle} /></label>
+          </div>
+        `}
+        <select value=${categoria} onChange=${e => setCategoria(e.target.value)} style=${{ ...inputStyle, width:'100%', marginTop:10 }}>
+          <option value="todas">Todas las categorías</option>
+          ${opcionesCategoria.map(c => html`<option key=${c} value=${c}>${c}</option>`)}
+        </select>
+        <p style=${{ fontSize:12, color:C.inkSoft, margin:'10px 0 0' }}>
+          Analizando: <strong style=${{ color:C.ink, fontWeight:500 }}>${etiquetaRango(desde, hasta)}</strong>${categoria !== 'todas' ? html` · <strong style=${{ color:C.ink, fontWeight:500 }}>${categoria}</strong>` : ''}
+          ${incluyeMesActual ? html`<span style=${{ color:C.inkFaint }}> (el mes actual cuenta hasta hoy)</span>` : ''}
+        </p>
+      </div>
+
+      <div style=${card}>
+        <p style=${kpiLabel}>Total gastado${categoria !== 'todas' ? ' en ' + categoria : ''}</p>
+        <p className="mono" style=${{ fontSize:28, fontWeight:600, margin:0 }}>${fmtARS(a.total)}</p>
+        ${variacion !== null && html`
+          <p style=${{ fontSize:12, color:C.inkSoft, margin:'6px 0 0' }}>
+            Período anterior (${etiquetaRango(desdeAnt, hastaAnt)}): <span className="mono">${fmtARS(ant.total)}</span> ·
+            <span className="mono" style=${{ color:C.ink }}> ${variacion > 0 ? '+' : ''}${variacion.toFixed(1).replace('.', ',')}%</span>
+          </p>
+        `}
+        <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1.4fr', gap:10, marginTop:14 }}>
+          <div><p style=${kpiLabel}>Cantidad</p><p className="mono" style=${{ fontSize:15, fontWeight:600, margin:0 }}>${a.cantidad}</p></div>
+          <div><p style=${kpiLabel}>Promedio</p><p className="mono" style=${{ fontSize:15, fontWeight:600, margin:0 }}>${fmtARS(a.promedio)}</p></div>
+          <div><p style=${kpiLabel}>${categoria === 'todas' ? 'Categoría con mayor gasto' : 'Subcategoría con mayor gasto'}</p><p style=${{ fontSize:14, fontWeight:600, margin:0 }}>${a.ranking.length ? a.ranking[0].nombre : '—'}</p></div>
+        </div>
+      </div>
+
+      ${a.cantidad === 0 ? html`
+        <div style=${card}><p style=${{ fontSize:13.5, color:C.inkSoft, textAlign:'center', margin:'0.5rem 0' }}>No hay gastos registrados en este período${categoria !== 'todas' ? ' para esta categoría' : ''}.</p></div>
+      ` : html`
+        <div style=${card}>
+          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, gap:8 }}>
+            <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>
+              ${categoria === 'todas' ? 'Gastos por categoría' : html`${categoria} — <span className="mono">${fmtARS(a.total)}</span> por subcategoría`}
+            </p>
+            ${categoria !== 'todas' && html`<button onClick=${() => setCategoria('todas')} style=${{ border:'none', background:'none', color:C.accent, fontSize:12, padding:0, whiteSpace:'nowrap' }}>← Todas</button>`}
+          </div>
+          ${a.ranking.map((r, i) => html`
+            <div key=${r.nombre} onClick=${categoria === 'todas' ? () => setCategoria(r.nombre) : undefined}
+              style=${{ padding:'7px 0', borderTop: i ? `0.5px solid ${C.border}` : 'none', cursor: categoria === 'todas' ? 'pointer' : 'default' }}>
+              <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:8, fontSize:13 }}>
+                <span><span className="mono" style=${{ color:C.inkFaint, marginRight:6 }}>${i + 1}.</span>${r.nombre}</span>
+                <span style=${{ whiteSpace:'nowrap' }}><span className="mono">${fmtARS(r.monto)}</span><span className="mono" style=${{ color:C.inkSoft, marginLeft:8, display:'inline-block', minWidth:44, textAlign:'right' }}>${fmtPct(r.pct)}</span></span>
+              </div>
+              <div style=${{ height:6, background:C.surfaceAlt, borderRadius:3, marginTop:5, overflow:'hidden' }}>
+                <div style=${{ width: (maxRanking > 0 ? r.monto / maxRanking * 100 : 0) + '%', height:'100%', background:C.ar, borderRadius:3 }}></div>
+              </div>
+            </div>
+          `)}
+          <p style=${{ fontSize:11, color:C.inkFaint, margin:'10px 0 0', lineHeight:1.5 }}>
+            Porcentajes sobre el total del período${categoria !== 'todas' ? ' en esta categoría' : ''}.${categoria === 'todas' ? ' Tocá una categoría para ver sus subcategorías.' : ''}
+          </p>
+          ${hayGastosSinCategoria && html`<p style=${{ fontSize:11, color:C.inkFaint, margin:'6px 0 0', lineHeight:1.5 }}>Estos gastos se cargaron antes de que existieran las categorías, así que se muestran según la descripción original. Podés asignarles una categoría editándolos en "Movimientos".</p>`}
+        </div>
+
+        <div style=${card}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Evolución mensual por ${agrupaPor}</p>
+          ${a.meses.length < 2 ? html`
+            <p style=${{ fontSize:12.5, color:C.inkSoft, margin:'6px 0 0', lineHeight:1.5 }}>Elegí un período de varios meses (por ejemplo "Últimos 6 meses") para ver cómo evolucionó cada ${agrupaPor}.</p>
+          ` : html`
+            <${EvolucionGastosChart} meses=${a.meses} series=${a.series} />
+            <div style=${{ display:'flex', flexWrap:'wrap', gap:'4px 12px', marginTop:10, fontSize:11.5, color:C.inkSoft }}>
+              <span style=${{ color:C.inkFaint }}>Total por mes:</span>
+              ${a.meses.map((mk, i) => html`<span key=${mk}>${etiquetaMes(mk, false)} <span className="mono" style=${{ color:C.ink }}>${fmtARS(a.totalesPorMes[i])}</span></span>`)}
+            </div>
+          `}
+        </div>
+      `}
+
+      ${categoria === 'todas' && (flujo.ingresos > 0 || flujo.gastos > 0 || flujo.invertido > 0) && html`
+        <div style=${card}>
+          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 10px' }}>Ingresos → Gastos → Inversión (${etiquetaRango(desde, hasta)})</p>
+          <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+            <div><p style=${kpiLabel}>Ingresos</p><p className="mono" style=${{ fontSize:14.5, fontWeight:600, margin:0 }}>${fmtARS(flujo.ingresos)}</p></div>
+            <div><p style=${kpiLabel}>Gastos</p><p className="mono" style=${{ fontSize:14.5, fontWeight:600, margin:0 }}>${fmtARS(flujo.gastos)}</p></div>
+            <div><p style=${kpiLabel}>Invertido</p><p className="mono" style=${{ fontSize:14.5, fontWeight:600, margin:0 }}>${fmtARS(flujo.invertido)}</p></div>
+          </div>
+          <p style=${{ fontSize:11, color:C.inkFaint, margin:'10px 0 0', lineHeight:1.5 }}>Resumen descriptivo con los mismos datos del resumen mensual de arriba (lo invertido sale del Registro de aportes).</p>
+        </div>
+      `}
     </div>
   `;
 }
@@ -1632,7 +1979,7 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
   const [editingId, setEditingId] = useState(null);
   const [mostrarTodos, setMostrarTodos] = useState(false);
 
-  const categorias = useMemo(() => [...new Set(movimientos.map(m => m.categoria))].sort(), [movimientos]);
+  const categorias = useMemo(() => [...new Set(movimientos.map(m => m.categoria))].filter(Boolean).sort(), [movimientos]);
 
   const allMonths = useMemo(() => {
     const set = new Set([monthKey]);
@@ -1654,14 +2001,6 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
     }
     return seleccionado || { ingresosMes:0, gastosMes:0, invertidoMes:0, flujo:0, disponible: acumulado };
   }, [allMonths, movimientos, aportes, monthKey]);
-
-  const categoryPieData = useMemo(() => {
-    const map = {};
-    movimientos.filter(m => m.tipo==='gasto' && monthKeyOf(m.fecha)===monthKey).forEach(m => { map[m.categoria] = (map[m.categoria]||0) + m.monto; });
-    const total = Object.values(map).reduce((s,v)=>s+v,0);
-    return Object.entries(map).map(([name,val],i) => ({ name: displayCat(name), monto: val, montoDisplay: fmtARS(val), value: total ? Math.round(val/total*1000)/10 : 0, colorIndex:i }))
-      .filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
-  }, [movimientos, monthKey]);
 
   const movimientosDelMes = useMemo(() =>
     movimientos.filter(m => monthKeyOf(m.fecha)===monthKey).sort((a,b)=>b.fecha.localeCompare(a.fecha))
@@ -1719,14 +2058,6 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
         </div>
       `}
 
-      ${categoryPieData.length > 0 && html`
-        <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem', marginBottom:16 }}>
-          <p style=${{ fontSize:13, fontWeight:500, margin:'0 0 4px' }}>Gastos por categoría</p>
-          <${DonutChart} data=${categoryPieData} />
-          <${LegendList} data=${categoryPieData} />
-        </div>
-      `}
-
       <div style=${{ background:C.surface, border:`0.5px solid ${C.border}`, borderRadius:12, padding:'1.25rem' }}>
         <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
           <p style=${{ fontSize:13, fontWeight:500, margin:0 }}>Movimientos</p>
@@ -1757,10 +2088,12 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
             <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <div style=${{ flex:1, cursor: (modoPresentacion || m.esAporte) ? 'default' : 'pointer' }}
                 onClick=${(!modoPresentacion && !m.esAporte) ? (() => setEditingId(editingId===m.id ? null : m.id)) : undefined}>
-                <p style=${{ fontSize:13.5, margin:0 }}>${displayCat(m.categoria)}${(!modoPresentacion && !m.esAporte) ? html`<span style=${{ color:C.inkFaint }}> ✎</span>` : ''}</p>
+                <p style=${{ fontSize:13.5, margin:0 }}>${m.esAporte ? displayCat(m.categoria) : tituloMovimiento(m)}${(!modoPresentacion && !m.esAporte) ? html`<span style=${{ color:C.inkFaint }}> ✎</span>` : ''}</p>
+                ${m.tipo==='gasto' && m.categoriaGasto && m.categoria && html`<p style=${{ fontSize:12, color:C.inkSoft, margin:'1px 0 0' }}>${displayCat(m.categoria)}</p>`}
                 <span className="mono" style=${{ fontSize:11, color: m.tipo==='ingreso' ? C.accent : m.tipo==='inversion' ? C.btc : C.danger }}>
                   ${m.tipo==='ingreso' ? 'Ingreso' : m.tipo==='inversion' ? 'Inversión' : 'Gasto'} · ${m.fecha}${m.esAporte ? ' · desde Registro de aportes' : ''}
                 </span>
+                ${m.tipo==='gasto' && !m.categoriaGasto && html`<span style=${{ fontSize:10.5, color:C.inkFaint, marginLeft:6, border:`0.5px solid ${C.border}`, borderRadius:4, padding:'0 4px' }}>${SIN_CATEGORIA}</span>`}
               </div>
               <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
                 <span className="mono" style=${{ fontSize:13.5, fontWeight:500, color: m.tipo==='ingreso' ? C.accent : m.tipo==='inversion' ? C.btc : C.danger }}>
@@ -1780,7 +2113,13 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
                     <option value="gasto">Gasto</option>
                   </select>
                 </div>
-                <input defaultValue=${displayCat(m.categoria)} onBlur=${e=>updateMovimiento(m.id, { categoria: e.target.value })} placeholder="Categoría"
+                ${m.tipo==='gasto' && html`<${CategoriaGastoSelects}
+                  categoria=${m.categoriaGasto || ''} subcategoria=${m.subcategoriaGasto || ''}
+                  permitirVacio=${!m.categoriaGasto}
+                  onChange=${patch => updateMovimiento(m.id, patch)}
+                  inputStyle=${{ width:'100%', padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5, marginTop:3 }}
+                  labelStyle=${{ fontSize:11, color:C.inkSoft, display:'block' }} />`}
+                <input defaultValue=${displayCat(m.categoria)} onBlur=${e=>updateMovimiento(m.id, { categoria: e.target.value })} placeholder=${m.tipo==='gasto' ? 'Descripción (opcional)' : 'Concepto'}
                   style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
                 <input type="number" step="any" defaultValue=${m.monto} onBlur=${e=>updateMovimiento(m.id, { monto: parseFloat(e.target.value)||m.monto })} placeholder="Monto"
                   style=${{ padding:'6px 8px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:12.5 }} />
@@ -1795,6 +2134,8 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
           </button>
         `}
       </div>
+
+      <${AnalisisGastos} movimientos=${movimientos} aportes=${aportes} />
     </div>
   `;
 }
