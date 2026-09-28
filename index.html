@@ -72,7 +72,7 @@
 import htm from 'https://unpkg.com/htm@3.1.1?module';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, doc, getDoc, setDoc, runTransaction } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 const { useState, useEffect, useMemo, useRef } = React;
 const html = htm.bind(React.createElement);
 
@@ -2140,6 +2140,68 @@ function GastosPanel({ movimientos, addMovimiento, removeMovimiento, updateMovim
   `;
 }
 
+/* ---------- guardado con versión (protección entre dispositivos) ---------- */
+// El documento usuarios/{uid} lleva un número de versión "rev" (sin rev = versión 0) y
+// "updatedAt" (fecha de la última escritura exitosa). Cada guardado es una transacción:
+// lee la versión remota; si nadie guardó desde nuestra última carga/guardado, escribe
+// normal con rev+1. Si otro dispositivo guardó en el medio, se fusiona elemento por
+// elemento (por "id"; en history, por "date") comparando tres copias:
+//   base   = cómo estaba en nuestra última carga/guardado,
+//   local  = lo que tenemos ahora en este dispositivo,
+//   remoto = lo que hay hoy en la nube.
+// Para cada elemento: si solo cambió de un lado, gana ese lado (incluye altas y bajas);
+// si cambió igual de los dos lados, da lo mismo; si cambió distinto de los dos lados es
+// un CONFLICTO: se conserva la versión remota (no se pisa lo del otro dispositivo) y se
+// avisa al usuario para que revise/repita su cambio.
+// history: se fusiona por fecha y NUNCA se borra un punto existente. Si los dos lados
+// cambiaron la misma fecha (pasa a diario, porque ambos recalculan el punto de hoy), gana
+// el dispositivo que está guardando ahora: es el cálculo más reciente de ese día. No se
+// avisa, porque es un dato automático, no algo que el usuario cargó.
+// Si en algún campo hay elementos sin id o con ids repetidos, NO se inventan ids: ese
+// campo se compara entero (si cambió de los dos lados, gana el remoto y se avisa).
+const CAMPOS_DOC = ['targets', 'positions', 'aportes', 'movimientos', 'diario', 'metas', 'history'];
+const NOMBRE_CAMPO = { targets:'cartera objetivo', positions:'posiciones', aportes:'aportes', movimientos:'movimientos', diario:'diario', metas:'metas', history:'historial' };
+function jsonEstable(v) {
+  if (Array.isArray(v)) return '[' + v.map(jsonEstable).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => JSON.stringify(k) + ':' + jsonEstable(v[k])).join(',') + '}';
+  return JSON.stringify(v === undefined ? null : v);
+}
+function mismoValor(a, b) { return jsonEstable(a) === jsonEstable(b); }
+function copiaProfunda(x) { return JSON.parse(JSON.stringify(x)); }
+function fusionarCampo(campo, base, local, remoto, opts = {}) {
+  base = Array.isArray(base) ? base : []; local = Array.isArray(local) ? local : []; remoto = Array.isArray(remoto) ? remoto : [];
+  const esHistorial = campo === 'history';
+  const clave = esHistorial ? (x => x && x.date) : (x => x && x.id);
+  const idsValidos = (arr) => { const ks = arr.map(clave); return ks.every(k => k !== undefined && k !== null && k !== '') && new Set(ks).size === ks.length; };
+  if (!idsValidos(base) || !idsValidos(local) || !idsValidos(remoto)) {
+    const cambioLocal = !mismoValor(local, base), cambioRemoto = !mismoValor(remoto, base);
+    if (!cambioLocal) return { valor: remoto, conflictos: [] };
+    if (!cambioRemoto || mismoValor(local, remoto)) return { valor: local, conflictos: [] };
+    return opts.preferirLocal ? { valor: local, conflictos: [] } : { valor: remoto, conflictos: [{ campo, id: null }] };
+  }
+  const mB = new Map(base.map(x => [clave(x), x])), mL = new Map(local.map(x => [clave(x), x])), mR = new Map(remoto.map(x => [clave(x), x]));
+  const orden = [...new Set([...remoto.map(clave), ...local.map(clave), ...base.map(clave)])];
+  const valor = [], conflictos = [];
+  orden.forEach(k => {
+    const b = mB.get(k), l = mL.get(k), r = mR.get(k);
+    const cambioLocal = !mismoValor(l, b), cambioRemoto = !mismoValor(r, b);
+    let v;
+    if (!cambioLocal) v = r;
+    else if (!cambioRemoto || mismoValor(l, r)) v = l;
+    else if (esHistorial || opts.preferirLocal) v = (l !== undefined ? l : r);
+    else { v = r; conflictos.push({ campo, id: k }); }
+    if (esHistorial && v === undefined && r !== undefined) v = r; // nunca borrar un punto del historial
+    if (v !== undefined) valor.push(v);
+  });
+  if (esHistorial) valor.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return { valor, conflictos };
+}
+function fusionarDocumento(base, local, remoto) {
+  const doc = {}, conflictos = [];
+  CAMPOS_DOC.forEach(c => { const r = fusionarCampo(c, base[c], local[c], remoto[c]); doc[c] = r.valor; conflictos.push(...r.conflictos); });
+  return { doc, conflictos };
+}
+
 /* ---------- app ---------- */
 function App({ user }) {
   const cacheKey = 'cache-cartera-' + user.uid;
@@ -2194,15 +2256,23 @@ function App({ user }) {
   // el guardado después, se pisarían los datos reales de la nube con datos vacíos.
   const [loadError, setLoadError] = useState(null);
   const [esNuevoUsuario, setEsNuevoUsuario] = useState(false);
+  // Versión remota conocida + copia "base" de los 7 campos tal como vinieron de la nube
+  // (o como quedaron en nuestro último guardado). Ver "guardado con versión" arriba.
+  const baseRef = useRef({ rev: 0, datos: null });
+  const guardadoEnCursoRef = useRef(null);
+  const [avisoSync, setAvisoSync] = useState('');
 
   async function cargarDesdeFirestore() {
     setLoadError(null);
     try {
       const ref = doc(db, 'usuarios', user.uid);
       const snap = await getDoc(ref);
-      let datos;
+      let datos, revRemota = 0, baseDatos;
       if (snap.exists()) {
         const d = snap.data();
+        revRemota = Number(d.rev) || 0;
+        baseDatos = {};
+        CAMPOS_DOC.forEach(c => { baseDatos[c] = Array.isArray(d[c]) ? d[c] : []; });
         datos = {
           targets: d.targets || DEFAULT_TARGETS, positions: d.positions || [], aportes: d.aportes || [],
           movimientos: d.movimientos || [], diario: d.diario || [], metas: d.metas || [], history: d.history || [],
@@ -2221,7 +2291,13 @@ function App({ user }) {
           diario: [], metas: [], history: loadLS('historial-valor', []),
         };
         setEsNuevoUsuario(true);
+        // Todavía no hay documento en la nube: la base es "todo vacío", así que lo migrado
+        // de este navegador cuenta como agregado local y no pisa nada si otro dispositivo
+        // llega a crear el documento primero.
+        baseDatos = {};
+        CAMPOS_DOC.forEach(c => { baseDatos[c] = []; });
       }
+      baseRef.current = { rev: revRemota, datos: copiaProfunda(baseDatos) };
       setTargets(datos.targets); setPositions(datos.positions); setAportes(datos.aportes);
       setMovimientos(datos.movimientos); setDiario(datos.diario); setMetas(datos.metas); setHistory(datos.history);
       saveLS(cacheKey, datos);
@@ -2238,6 +2314,54 @@ function App({ user }) {
     cargarDesdeFirestore();
     // eslint-disable-next-line
   }, [user.uid]);
+
+  // Guardado versionado (ver "guardado con versión" arriba de App). Los guardados de
+  // este dispositivo se encadenan de a uno, para que cada uno parta de la versión que
+  // dejó el anterior. Devuelve una promesa; si falla, la rechaza (el que llama decide
+  // cómo mostrar el error, igual que antes).
+  const settersPorCampo = { targets: setTargets, positions: setPositions, aportes: setAportes, movimientos: setMovimientos, diario: setDiario, metas: setMetas, history: setHistory };
+  function guardarEnNube(payload) {
+    const anterior = guardadoEnCursoRef.current || Promise.resolve();
+    const tarea = anterior.catch(() => {}).then(() => guardarVersionado(payload));
+    guardadoEnCursoRef.current = tarea;
+    return tarea;
+  }
+  async function guardarVersionado(payload) {
+    const base = baseRef.current;
+    // Nada nuevo que guardar (solo si el documento ya tiene versión: el primer guardado de
+    // un documento viejo sin "rev", o de una cuenta nueva, siempre se hace, para migrarlo).
+    if (base.rev > 0 && base.datos && CAMPOS_DOC.every(c => mismoValor(payload[c], base.datos[c]))) return;
+    const ref = doc(db, 'usuarios', user.uid);
+    const res = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const remoto = snap.exists() ? snap.data() : null;
+      const revRemota = remoto ? (Number(remoto.rev) || 0) : 0;
+      const local = {}; CAMPOS_DOC.forEach(c => { local[c] = payload[c]; });
+      let final = local, conflictos = [];
+      const huboOtroGuardado = revRemota !== base.rev;
+      if (huboOtroGuardado) {
+        const remDatos = {}; CAMPOS_DOC.forEach(c => { remDatos[c] = remoto && Array.isArray(remoto[c]) ? remoto[c] : []; });
+        const baseDatos = base.datos || (() => { const v = {}; CAMPOS_DOC.forEach(c => { v[c] = []; }); return v; })();
+        const f = fusionarDocumento(baseDatos, local, remDatos);
+        final = f.doc; conflictos = f.conflictos;
+      }
+      tx.set(ref, { ...final, rev: revRemota + 1, updatedAt: new Date().toISOString() });
+      return { final, rev: revRemota + 1, conflictos, huboOtroGuardado };
+    });
+    baseRef.current = { rev: res.rev, datos: copiaProfunda(res.final) };
+    saveLS(cacheKey, res.final);
+    if (res.huboOtroGuardado) {
+      // Traer a la pantalla lo que vino del otro dispositivo, sin perder lo que el usuario
+      // pueda haber cambiado en este mismo instante (mientras la transacción viajaba).
+      CAMPOS_DOC.forEach(c => {
+        if (!mismoValor(payload[c], res.final[c])) settersPorCampo[c](prev => fusionarCampo(c, payload[c], prev, res.final[c], { preferirLocal: true }).valor);
+      });
+    }
+    if (res.conflictos.length > 0) {
+      const campos = [...new Set(res.conflictos.map(x => NOMBRE_CAMPO[x.campo] || x.campo))].join(', ');
+      setAvisoSync(`Otro dispositivo modificó al mismo tiempo ${res.conflictos.length === 1 ? 'un elemento' : res.conflictos.length + ' elementos'} que vos también cambiaste (${campos}). Se conservó la versión guardada desde el otro dispositivo y se guardó el resto de tus cambios. Revisá y repetí tu último cambio si hace falta.`);
+    }
+  }
 
   // Guardado: cada cambio se manda a Firestore (con una pequeña demora para no
   // mandar un pedido por cada tecla). Solo corre si "loaded" es true, es decir,
@@ -2258,9 +2382,7 @@ function App({ user }) {
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
       const payload = { targets, positions, aportes, movimientos, diario, metas, history };
-      setDoc(doc(db, 'usuarios', user.uid), payload).then(() => {
-        saveLS(cacheKey, payload);
-      }).catch((e) => {
+      guardarEnNube(payload).catch((e) => {
         setLiveStatus('No se pudo guardar en la nube: ' + e.message);
       });
     }, 800);
@@ -2287,7 +2409,7 @@ function App({ user }) {
       const pintaVacio = !nuevo && payload.positions.length === 0 && payload.aportes.length === 0 &&
         payload.movimientos.length === 0 && payload.diario.length === 0 && payload.metas.length === 0 && payload.history.length === 0;
       if (pintaVacio) return;
-      setDoc(doc(db, 'usuarios', user.uid), payload).then(() => saveLS(cacheKey, payload)).catch(() => {});
+      guardarEnNube(payload).catch(() => {});
     }
     function onVisibilityChange() { if (document.visibilityState === 'hidden') flush(); }
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -2565,6 +2687,12 @@ function App({ user }) {
           <div style=${{ background:'rgba(255,107,91,0.12)', border:`0.5px solid ${C.danger}`, borderRadius:10, padding:'10px 14px', marginBottom:16, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
             <p style=${{ fontSize:12, color:C.danger, margin:0, lineHeight:1.5 }}>No se pudo actualizar desde la nube — mostrando la última versión guardada en este celular.</p>
             <button onClick=${cargarDesdeFirestore} style=${{ border:'none', background:C.danger, color:'#0A1512', borderRadius:6, padding:'5px 10px', fontSize:11.5, fontWeight:600, flexShrink:0 }}>Reintentar</button>
+          </div>
+        `}
+        ${avisoSync && html`
+          <div style=${{ background:'rgba(247,169,59,0.12)', border:`0.5px solid ${C.btc}`, borderRadius:10, padding:'10px 14px', marginBottom:16, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <p style=${{ fontSize:12, color:C.btc, margin:0, lineHeight:1.5, flex:1, minWidth:200 }}>${avisoSync}</p>
+            <button onClick=${() => setAvisoSync('')} style=${{ border:'none', background:C.btc, color:'#0A1512', borderRadius:6, padding:'5px 10px', fontSize:11.5, fontWeight:600, flexShrink:0 }}>Entendido</button>
           </div>
         `}
         ${(loaded || mostrandoCache) && tab === 'inicio' && html`<${HomePanel}
