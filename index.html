@@ -2202,6 +2202,77 @@ function fusionarDocumento(base, local, remoto) {
   return { doc, conflictos };
 }
 
+/* ---------- backup: validación y restauración ---------- */
+// Formato del backup (V1.0): { app:'cartera-inversiones', formatoBackup:2, exportedAt, targets,
+// positions, aportes, movimientos, diario, metas, history }. Los backups viejos no tienen
+// "app" ni "formatoBackup" y pueden no traer movimientos/diario/metas: se aceptan igual.
+// Reglas al restaurar (decisión explícita del usuario, no la fusión automática de dos
+// dispositivos):
+//   - campo PRESENTE en el backup → reemplaza el actual (una lista vacía es "vaciar a
+//     propósito" y se advierte antes de confirmar);
+//   - campo AUSENTE → el actual queda intacto;
+//   - history → se une por fecha: se conservan todas las fechas actuales, se agregan las
+//     del backup y, si una fecha está en los dos, gana el backup. Nunca se borra una fecha.
+const APP_BACKUP = 'cartera-inversiones';
+const FORMATO_BACKUP = 2;
+function validarBackup(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { ok: false, error: 'El archivo no contiene un backup (no es un objeto de datos).' };
+  if (data.app !== undefined && data.app !== APP_BACKUP) return { ok: false, error: 'El archivo es de otra aplicación ("' + String(data.app) + '"), no de esta cartera.' };
+  if (data.formatoBackup !== undefined && !(Number(data.formatoBackup) >= 1 && Number(data.formatoBackup) <= FORMATO_BACKUP)) return { ok: false, error: 'El backup tiene un formato que esta versión de la app no reconoce (' + String(data.formatoBackup) + ').' };
+  const campos = {};
+  for (const c of CAMPOS_DOC) {
+    if (!Object.prototype.hasOwnProperty.call(data, c) || data[c] === undefined) continue;
+    const arr = data[c];
+    if (!Array.isArray(arr)) return { ok: false, error: `El campo "${NOMBRE_CAMPO[c]}" no es una lista.` };
+    const vistos = new Set();
+    for (let i = 0; i < arr.length; i++) {
+      const el = arr[i];
+      if (!el || typeof el !== 'object' || Array.isArray(el)) return { ok: false, error: `El elemento ${i + 1} de "${NOMBRE_CAMPO[c]}" no es válido.` };
+      const clave = c === 'history' ? el.date : el.id;
+      const claveOk = c === 'history' ? (typeof clave === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(clave)) : ((typeof clave === 'string' && clave !== '') || typeof clave === 'number');
+      if (!claveOk) return { ok: false, error: `El elemento ${i + 1} de "${NOMBRE_CAMPO[c]}" no tiene ${c === 'history' ? 'una fecha válida' : 'identificador (id)'}.` };
+      if (vistos.has(clave)) return { ok: false, error: `"${NOMBRE_CAMPO[c]}" tiene ${c === 'history' ? 'fechas' : 'identificadores'} repetidos (${String(clave)}).` };
+      vistos.add(clave);
+    }
+    campos[c] = arr;
+  }
+  if (Object.keys(campos).length === 0) return { ok: false, error: 'El archivo no tiene ninguno de los datos de un backup de esta cartera.' };
+  return { ok: true, campos };
+}
+function aplicarRestauracion(actual, campos) {
+  const final = {};
+  CAMPOS_DOC.forEach(c => {
+    const act = Array.isArray(actual[c]) ? actual[c] : [];
+    if (!(c in campos)) { final[c] = act; return; }
+    if (c === 'history') {
+      const porFecha = new Map(act.map(h => [h.date, h]));
+      campos.history.forEach(h => porFecha.set(h.date, h)); // misma fecha → gana el backup
+      final[c] = [...porFecha.values()].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    } else {
+      final[c] = campos[c];
+    }
+  });
+  return final;
+}
+function resumenRestauracion(actual, campos) {
+  const reemplaza = [], mantiene = [], vacia = [];
+  CAMPOS_DOC.filter(c => c !== 'history').forEach(c => {
+    const nAct = Array.isArray(actual[c]) ? actual[c].length : 0;
+    if (c in campos) { reemplaza.push(`${NOMBRE_CAMPO[c]}: ${campos[c].length} (hoy ${nAct})`); if (campos[c].length === 0 && nAct > 0) vacia.push(`${NOMBRE_CAMPO[c]} (hoy ${nAct})`); }
+    else mantiene.push(NOMBRE_CAMPO[c]);
+  });
+  let historial = 'historial: no viene en el backup, queda igual';
+  if ('history' in campos) {
+    const actuales = new Set((actual.history || []).map(h => h.date));
+    const nuevas = campos.history.filter(h => !actuales.has(h.date)).length;
+    const pisadas = campos.history.length - nuevas;
+    historial = `historial: ${nuevas === 1 ? 'se agrega 1 fecha' : 'se agregan ' + nuevas + ' fechas'} del backup${pisadas ? `, y ${pisadas === 1 ? '1 fecha que ya existía toma' : pisadas + ' fechas que ya existían toman'} el valor del backup` : ''}; no se borra ninguna fecha actual`;
+  }
+  const final = aplicarRestauracion(actual, campos);
+  const todoVacio = CAMPOS_DOC.every(c => final[c].length === 0);
+  return { reemplaza, mantiene, vacia, historial, todoVacio, final };
+}
+
 /* ---------- app ---------- */
 function App({ user }) {
   const cacheKey = 'cache-cartera-' + user.uid;
@@ -2622,32 +2693,95 @@ function App({ user }) {
   }, [withDerived, totalValue]);
 
   function exportBackup() {
-    const payload = { targets, positions, aportes, history, exportedAt: new Date().toISOString() };
+    // Backup completo V1.0: los 7 datos de la cartera + metadata del formato.
+    const payload = { app: APP_BACKUP, formatoBackup: FORMATO_BACKUP, exportedAt: new Date().toISOString(), targets, positions, aportes, movimientos, diario, metas, history };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `mi-cartera-backup-${new Date().toISOString().slice(0,10)}.json`;
+    const hoy = new Date();
+    const fechaLocal = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+    a.href = url; a.download = `mi-cartera-backup-${fechaLocal}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  // Restaurar solo es posible con una carga confirmada desde la nube y con conexión: la
+  // restauración se escribe directo en Firestore (no pasa por el guardado automático).
+  function motivoParaNoImportar() {
+    if (!loaded || mostrandoCache || loadError) return 'Esperá a que termine de cargar tu cartera desde la nube antes de importar un backup. No se modificó nada.';
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'No hay conexión. Para restaurar un backup hace falta conexión, porque se guarda directo en la nube. No se modificó nada.';
+    return null;
+  }
+  function abrirSelectorBackup() {
+    const motivo = motivoParaNoImportar();
+    if (motivo) { alert(motivo); return; }
+    if (fileInputRef.current) fileInputRef.current.click();
+  }
+
   function handleImportFile(e) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result);
-        if (!window.confirm('Esto va a reemplazar tus datos actuales por los del backup. ¿Confirmás?')) return;
-        if (Array.isArray(data.targets)) setTargets(data.targets);
-        if (Array.isArray(data.positions)) setPositions(data.positions);
-        if (Array.isArray(data.aportes)) setAportes(data.aportes);
-        if (Array.isArray(data.history)) setHistory(data.history);
-      } catch (err) {
-        alert('El archivo no es un backup válido.');
-      }
+    reader.onload = async () => {
+      let data;
+      try { data = JSON.parse(reader.result); }
+      catch (err) { alert('El archivo no es un backup válido: no se pudo leer (está dañado o incompleto). No se modificó nada.'); return; }
+      const v = validarBackup(data);
+      if (!v.ok) { alert(v.error + ' No se modificó nada.'); return; }
+      const motivo = motivoParaNoImportar();
+      if (motivo) { alert(motivo); return; }
+      try { await restaurarBackup(v.campos, data.exportedAt); }
+      catch (err) { alert('No se pudo restaurar el backup: ' + err.message + '. No se modificó nada en la nube.'); }
     };
+    reader.onerror = () => alert('No se pudo leer el archivo. No se modificó nada.');
     reader.readAsText(file);
     e.target.value = '';
+  }
+
+  // Restauración explícita (no usa la fusión automática entre dispositivos): se aplica
+  // sobre lo que hay HOY en la nube, con las reglas de aplicarRestauracion, en una
+  // transacción propia que sube "rev" y "updatedAt".
+  async function restaurarBackup(campos, exportedAt) {
+    // 1) Mandar primero cualquier cambio de este dispositivo que estuviera esperando.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current); saveTimer.current = null;
+      await guardarEnNube(ultimoPayloadRef.current.payload).catch(() => {});
+    }
+    await (guardadoEnCursoRef.current || Promise.resolve()).catch(() => {});
+    // 2) Leer la nube y armar el resumen.
+    const ref = doc(db, 'usuarios', user.uid);
+    const snap = await getDoc(ref);
+    const remoto = snap.exists() ? snap.data() : {};
+    const revVista = Number(remoto.rev) || 0;
+    const actual = {}; CAMPOS_DOC.forEach(c => { actual[c] = Array.isArray(remoto[c]) ? remoto[c] : []; });
+    const r = resumenRestauracion(actual, campos);
+    if (r.todoVacio) { alert('Se bloqueó la restauración: dejaría la cartera completamente vacía (los 7 datos sin nada). No se modificó nada.'); return; }
+    const huboCambiosRemotos = revVista !== baseRef.current.rev;
+    let msg = 'Restaurar backup' + (exportedAt ? ' del ' + String(exportedAt).slice(0, 10) : '') + '\n\n'
+      + 'Se reemplazan:\n• ' + (r.reemplaza.length ? r.reemplaza.join('\n• ') : '(ninguno)') + '\n\n'
+      + 'Se mantienen como están (el backup no los trae):\n• ' + (r.mantiene.length ? r.mantiene.join('\n• ') : '(ninguno)') + '\n\n'
+      + r.historial + '.';
+    if (r.vacia.length) msg += '\n\n⚠ QUEDARÍAN VACÍOS (se eliminan los elementos actuales): ' + r.vacia.join(', ') + '.';
+    if (huboCambiosRemotos) msg += '\n\n⚠ Hay cambios guardados desde otro dispositivo después de tu última carga. Restaurar los reemplaza en los datos de arriba.';
+    msg += '\n\n¿Confirmás la restauración?';
+    if (!window.confirm(msg)) return;
+    if (r.vacia.length && !window.confirm('Confirmación extra: al restaurar se van a ELIMINAR todos los elementos actuales de: ' + r.vacia.join(', ') + '. ¿Seguro que querés continuar?')) return;
+    // 3) Transacción: si la nube cambió mientras confirmabas, no se pisa nada.
+    const res = await runTransaction(db, async (tx) => {
+      const s2 = await tx.get(ref);
+      const rem = s2.exists() ? s2.data() : {};
+      const rev = Number(rem.rev) || 0;
+      if (rev !== revVista) throw new Error('la nube cambió mientras confirmabas (otro dispositivo guardó). Volvé a importar para ver el resumen actualizado');
+      const act = {}; CAMPOS_DOC.forEach(c => { act[c] = Array.isArray(rem[c]) ? rem[c] : []; });
+      const final = aplicarRestauracion(act, campos);
+      tx.set(ref, { ...final, rev: rev + 1, updatedAt: new Date().toISOString() });
+      return { final, rev: rev + 1 };
+    });
+    // 4) Base conocida, caché y pantalla = resultado final.
+    baseRef.current = { rev: res.rev, datos: copiaProfunda(res.final) };
+    saveLS(cacheKey, res.final);
+    CAMPOS_DOC.forEach(c => settersPorCampo[c](res.final[c]));
+    alert('Backup restaurado.');
   }
 
   return html`
@@ -2702,7 +2836,7 @@ function App({ user }) {
           usdArs=${usdArs} showUSD=${showUSD} setShowUSD=${setShowUSD}
           hideAmounts=${hideAmounts} setHideAmounts=${setHideAmounts} modoPresentacion=${modoPresentacion}
           inflacionMensual=${inflacionMensual} inflacionAnualizada=${inflacionAnualizada}
-          onExport=${exportBackup} onImportClick=${() => fileInputRef.current && fileInputRef.current.click()}
+          onExport=${exportBackup} onImportClick=${abrirSelectorBackup}
         />`}
 
         ${(loaded || mostrandoCache) && tab === 'gestion' && html`<${GestionPanel}
