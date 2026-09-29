@@ -1503,11 +1503,21 @@ function GestionPanel({ targets, targetSum, showAddTarget, setShowAddTarget, add
                 : html`
                   <label style=${{ fontSize:12, color:C.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
                     Precio actual
-                    <input type="number" step="any" defaultValue=${p.currentPrice} onBlur=${e => updateCurrentPrice(p.id, parseFloat(e.target.value)||0)}
+                    <input type="number" step="any" key=${p.id + ':' + p.currentPrice} defaultValue=${p.currentPrice}
+                      onBlur=${e => {
+                        // Problema #5: antes, salir del campo guardaba SIEMPRE lo que mostraba (y el
+                        // campo no se refrescaba tras "Precios en vivo"), pisando el precio automático
+                        // con el valor viejo. Ahora el campo se vuelve a montar cuando cambia el precio
+                        // (key), y solo se guarda si el usuario escribió un número válido DISTINTO.
+                        const v = parseFloat(e.target.value);
+                        if (!(v > 0)) { e.target.value = p.currentPrice; return; }
+                        if (v !== p.currentPrice) updateCurrentPrice(p.id, v);
+                      }}
                       className="mono" style=${{ width:90, padding:'4px 6px', borderRadius:6, border:`0.5px solid ${C.border}`, fontSize:13 }} />
                   </label>
                 `}
               <div style=${{ textAlign:'right' }}>
+                ${p.precioOrigen && html`<p style=${{ fontSize:10.5, color:C.inkFaint, margin:0 }} title=${p.precioActualizado ? new Date(p.precioActualizado).toLocaleString('es-AR') : ''}>${p.precioOrigen === 'auto' ? 'precio automático' : 'precio manual'}${p.precioActualizado ? ' · ' + new Date(p.precioActualizado).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}</p>`}
                 <p className="mono" style=${{ fontSize:13.5, fontWeight:500, margin:0 }}>${fmtARS(p.value)}</p>
                 <p className="mono" style=${{ fontSize:12, margin:0, color: p.pl>=0 ? C.accent : C.danger }}>${p.pl>=0?'▲':'▼'} ${fmtPct(p.plPct)}</p>
               </div>
@@ -2550,7 +2560,9 @@ function App({ user }) {
 
   function addPosition(p) { setPositions(prev => [...prev, { ...p, id:newId('p') }]); setShowAddPosition(false); }
   function removePosition(id) { setPositions(prev => prev.filter(p => p.id !== id)); }
-  function updateCurrentPrice(id, val) { setPositions(prev => prev.map(p => p.id === id ? { ...p, currentPrice: val } : p)); }
+  // precioOrigen ('auto' | 'manual') y precioActualizado (fecha ISO) son campos opcionales:
+  // las posiciones viejas sin ellos siguen funcionando igual (no se migra nada).
+  function updateCurrentPrice(id, val) { setPositions(prev => prev.map(p => p.id === id ? { ...p, currentPrice: val, precioOrigen: 'manual', precioActualizado: new Date().toISOString() } : p)); }
   function updatePosition(id, patch) { setPositions(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p)); }
 
   function addAporte(a) { setAportes(prev => [...prev, { ...a, id:newId('a') }]); }
@@ -2581,7 +2593,7 @@ function App({ user }) {
       const rawName = m[1].trim();
       const price = parseFloat(m[2].replace(',', '.'));
       const idx = updated.findIndex(p => norm(p.name) === norm(rawName));
-      if (idx >= 0 && price > 0) { updated[idx].currentPrice = price; matched++; }
+      if (idx >= 0 && price > 0) { updated[idx].currentPrice = price; updated[idx].precioOrigen = 'manual'; updated[idx].precioActualizado = new Date().toISOString(); matched++; }
       else unmatched.push(line);
     });
     setPositions(updated);
@@ -2600,7 +2612,7 @@ function App({ user }) {
       Object.keys(data.prices || {}).forEach(k => { normPrices[norm(k)] = data.prices[k]; });
       setPositions(prev => prev.map(p => {
         const price = normPrices[norm(p.name)];
-        if (price) { updated++; return { ...p, currentPrice: price }; }
+        if (price > 0) { updated++; return { ...p, currentPrice: price, precioOrigen: 'auto', precioActualizado: data.updatedAt || new Date().toISOString() }; }
         return p;
       }));
       if (data.usdArs) setUsdArs(data.usdArs);
