@@ -31,8 +31,14 @@ const TICKERS = {
   },
 };
 
+const I = require('./_instrumentos');
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
+  // Motor genérico: /api/precios?ids=id1,id2 devuelve el precio CRUDO de cada
+  // instrumento. Sin `ids`, se mantiene la respuesta de siempre (ruta vieja).
+  const ids = leerIds(req);
+  if (ids) return preciosPorIds(ids, res);
   try {
     const fuentes = [
       { key: 'cedears', url: 'https://data912.com/live/arg_cedears' },
@@ -108,4 +114,129 @@ function suggestSimilar(arr, symbol) {
 function pickPrice(row) {
   const val = row.c ?? row.px_bid ?? row.px_ask ?? null;
   return typeof val === 'number' && val > 0 ? val : null;
+}
+
+// ---------------------------------------------------------------------------
+// Motor genérico (Fase 5A). La API NO convierte unidades ni monedas: entrega el
+// valor tal cual lo publica la fuente, con su unidad y moneda. Para cripto
+// informa además el MEP por separado; la conversión la hace el cliente una vez.
+// ---------------------------------------------------------------------------
+// Transporte robusto: cada id va codificado con encodeURIComponent (una coma
+// dentro de un id viaja como %2C) y los ids se separan con comas literales.
+// Por eso se lee la query CRUDA de req.url y se decodifica cada id por separado:
+// req.query ya viene decodificado y no distinguiría ambas comas. También acepta
+// ?ids=a&ids=b. Devuelve null si no hay `ids` (ruta vieja).
+function leerIds(req) {
+  const url = req && typeof req.url === 'string' ? req.url : '';
+  const q = url.indexOf('?') >= 0 ? url.slice(url.indexOf('?') + 1) : '';
+  const crudos = q.split('&').filter(par => par.split('=')[0] === 'ids').map(par => par.slice(4));
+  let ids;
+  if (crudos.length) {
+    ids = [];
+    crudos.forEach(v => v.split(',').forEach(parte => {
+      try { ids.push(decodeURIComponent(parte.replace(/\+/g, ' '))); } catch (e) { ids.push(''); }
+    }));
+  } else if (req && req.query && req.query.ids) {
+    const v = req.query.ids; // respaldo si no hay req.url
+    ids = (Array.isArray(v) ? v : [v]).join(',').split(',');
+  } else {
+    return null;
+  }
+  ids = [...new Set(ids.map(s => s.trim()).filter(Boolean))].slice(0, 100);
+  return ids.length ? ids : null;
+}
+
+async function preciosPorIds(ids, res) {
+  try {
+    const consultadoEn = new Date().toISOString();
+    const resultados = {};
+    const grupos = {}; // "proveedor:panel" -> [{ id, clave }]
+    ids.forEach(id => {
+      const p = I.parsearId(id);
+      if (!p) { resultados[id] = { id, ok: false, motivo: 'id inválido' }; return; }
+      const g = `${p.proveedor}:${p.panel}`;
+      (grupos[g] = grupos[g] || []).push({ id, ...p });
+    });
+
+    const fuentesConError = [];
+    const falla = (nombre, e) => fuentesConError.push(`${nombre}: ${(e && e.message) || e}`);
+    let necesitaMep = false;
+
+    await Promise.all(Object.keys(grupos).map(async g => {
+      const items = grupos[g];
+      const { proveedor, panel } = items[0];
+      if (proveedor === 'data912' && I.PANELES_DATA912[panel]) {
+        let filas;
+        try { filas = await I.fetchJSON(I.urlData912(panel)); } catch (e) { falla(`data912/${panel}`, e); filas = null; }
+        const simbolosPanel = new Set((Array.isArray(filas) ? filas : []).map(x => x && typeof x.symbol === 'string' ? x.symbol.trim().toUpperCase() : null).filter(Boolean));
+        items.forEach(({ id, clave }) => {
+          if (!filas) { resultados[id] = { id, ok: false, motivo: 'fuente no disponible' }; return; }
+          const fila = filas.find(x => x && typeof x.symbol === 'string' && x.symbol.trim().toUpperCase() === clave.toUpperCase());
+          if (!fila) { resultados[id] = { id, ok: false, motivo: 'no figura en el panel' }; return; }
+          const def = I.definirData912(panel, clave.toUpperCase(), simbolosPanel);
+          resultados[id] = {
+            id, ok: true, estado: def.estado,
+            precioFuente: fila.c === undefined ? null : fila.c, // crudo: se valida en el cliente
+            unidadFuente: def.unidadFuente, monedaFuente: def.moneda,
+            fuente: { proveedor, panel, clave: def.simbolo, campo: 'c' },
+            consultadoEn, fechaCotizacion: null, // data912 no publica fecha
+          };
+        });
+      } else if (proveedor === 'argentinadatos' && I.CATEGORIAS_FCI.includes(panel)) {
+        let filas;
+        try { filas = await I.fetchJSON(I.urlFCI(panel)); } catch (e) { falla(`argentinadatos/${panel}`, e); filas = null; }
+        items.forEach(({ id, clave }) => {
+          if (!Array.isArray(filas)) { resultados[id] = { id, ok: false, motivo: 'fuente no disponible' }; return; }
+          const fila = filas.find(x => x && x.fondo === clave);
+          if (!fila) { resultados[id] = { id, ok: false, motivo: 'no figura en la categoría' }; return; }
+          const def = I.definirFCI(panel, clave);
+          resultados[id] = {
+            id, ok: true, estado: def.estado,
+            precioFuente: fila.vcp === undefined ? null : fila.vcp,
+            unidadFuente: def.unidadFuente, monedaFuente: def.moneda,
+            fuente: { proveedor, panel, clave, campo: 'vcp' },
+            consultadoEn, fechaCotizacion: typeof fila.fecha === 'string' ? fila.fecha : null,
+          };
+        });
+      } else if (proveedor === 'coingecko' && panel === 'simple') {
+        const validos = items.filter(it => I.CRIPTO[it.clave]);
+        items.filter(it => !I.CRIPTO[it.clave]).forEach(({ id }) => { resultados[id] = { id, ok: false, motivo: 'cripto no soportada' }; });
+        if (!validos.length) return;
+        necesitaMep = true;
+        let data;
+        try { data = await I.fetchJSON(I.urlCoingecko(validos.map(v => v.clave))); } catch (e) { falla('coingecko', e); data = null; }
+        validos.forEach(({ id, clave }) => {
+          if (!data) { resultados[id] = { id, ok: false, motivo: 'fuente no disponible' }; return; }
+          const def = I.definirCripto(clave);
+          const usd = data[clave] ? data[clave].usd : undefined;
+          resultados[id] = {
+            id, ok: true, estado: def.estado,
+            precioFuente: usd === undefined ? null : usd,
+            unidadFuente: def.unidadFuente, monedaFuente: def.moneda,
+            fuente: { proveedor, panel, clave, campo: 'usd' },
+            consultadoEn, fechaCotizacion: null,
+          };
+        });
+      } else {
+        items.forEach(({ id }) => { resultados[id] = { id, ok: false, motivo: 'proveedor o panel desconocido' }; });
+      }
+    }));
+
+    // Tipo de cambio informado aparte, sin aplicarlo.
+    const tiposCambio = {};
+    if (necesitaMep) {
+      try {
+        const mep = await I.fetchJSON(I.URL_MEP);
+        const valor = mep && typeof mep.compra === 'number' && typeof mep.venta === 'number' ? (mep.compra + mep.venta) / 2 : null;
+        tiposCambio.MEP = { nombre: 'MEP', valor, fuente: 'dolarapi.com /v1/dolares/bolsa (promedio compra/venta)', consultadoEn };
+      } catch (e) {
+        falla('dolarapi', e);
+        tiposCambio.MEP = { nombre: 'MEP', valor: null, fuente: 'dolarapi.com /v1/dolares/bolsa (promedio compra/venta)', consultadoEn };
+      }
+    }
+
+    res.status(200).json({ ok: true, resultados, tiposCambio, fuentesConError, consultadoEn });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e) });
+  }
 }

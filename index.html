@@ -438,6 +438,83 @@ function AddTargetForm({ onAdd, onCancel, catalogo }) {
 // da una recomendación, solo ayuda a no tener que escribir todo a mano. Al
 // confirmar, cada activo elegido se agrega como target con 0% — el usuario
 // define el porcentaje después, en el editor de siempre.
+// ==== MOTOR DE PRECIOS (Fase 5A) ====
+// Catálogo → instrumento → fuente → precio crudo (/api/precios?ids=) →
+// normalizarPrecio() → cotización normalizada. Es el ÚNICO lugar donde se
+// convierten unidades o monedas, y se hace una sola vez. Todavía no está
+// conectado a las posiciones: la ruta vieja sigue igual hasta la próxima fase.
+const MOTIVO_SIN_COTIZACION = 'Sin cotización válida en la última actualización.';
+
+function precioCrudoValido(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0;
+}
+function redondear6(x) {
+  return Math.round(x * 1e6) / 1e6;
+}
+
+// crudo: un elemento de `resultados` de /api/precios?ids=
+// instrumento: definición del catálogo. tiposCambio: `tiposCambio` de la API.
+// Devuelve { ok:true, precio, cotizacion } o { ok:false, motivo }. Nunca devuelve 0.
+function normalizarPrecio(crudo, instrumento, tiposCambio) {
+  if (!instrumento || instrumento.estado !== 'soportado') return { ok: false, motivo: 'Instrumento no soportado para cotización automática.' };
+  if (!crudo || !crudo.ok || crudo.id !== instrumento.id) return { ok: false, motivo: MOTIVO_SIN_COTIZACION };
+  if (!precioCrudoValido(crudo.precioFuente)) return { ok: false, motivo: MOTIVO_SIN_COTIZACION };
+  if (crudo.unidadFuente !== instrumento.unidadFuente || crudo.monedaFuente !== instrumento.moneda) return { ok: false, motivo: 'La fuente informó una unidad o moneda distinta a la del instrumento.' };
+  const factor = instrumento.factor;
+  if (!precioCrudoValido(factor)) return { ok: false, motivo: 'Instrumento sin factor verificado.' };
+  let tipoCambio = null;
+  let multiplicador = factor;
+  if (instrumento.moneda === 'USD') {
+    const tc = instrumento.conversion && instrumento.conversion.a === 'ARS' && tiposCambio ? tiposCambio[instrumento.conversion.tipoCambio] : null;
+    if (!tc || !precioCrudoValido(tc.valor)) return { ok: false, motivo: 'Sin tipo de cambio MEP válido: no se actualizó el precio.' };
+    tipoCambio = { nombre: tc.nombre, valor: tc.valor, fuente: tc.fuente, consultadoEn: tc.consultadoEn };
+    multiplicador = factor * tc.valor;
+  } else if (instrumento.moneda !== 'ARS') {
+    return { ok: false, motivo: 'Moneda del instrumento no verificada.' };
+  }
+  const precio = redondear6(crudo.precioFuente * multiplicador);
+  if (!precioCrudoValido(precio)) return { ok: false, motivo: MOTIVO_SIN_COTIZACION };
+  return {
+    ok: true,
+    precio,
+    cotizacion: {
+      precioFuente: crudo.precioFuente,
+      unidadFuente: crudo.unidadFuente,
+      monedaFuente: crudo.monedaFuente,
+      factor,
+      tipoCambio,
+      precioNormalizado: precio,
+      fuente: crudo.fuente,
+      consultadoEn: crudo.consultadoEn,
+      fechaCotizacion: crudo.fechaCotizacion == null ? null : crudo.fechaCotizacion,
+    },
+  };
+}
+
+// Aplica una cotización a una posición SIN tocar units ni avgPrice. Si no hay
+// precio válido, conserva el último currentPrice y solo deja el aviso.
+function aplicarCotizacion(posicion, resultadoNormalizado) {
+  if (!resultadoNormalizado || !resultadoNormalizado.ok) {
+    return { ...posicion, cotizacionAviso: (resultadoNormalizado && resultadoNormalizado.motivo) || MOTIVO_SIN_COTIZACION };
+  }
+  const { cotizacionAviso, ...resto } = posicion;
+  return {
+    ...resto,
+    currentPrice: resultadoNormalizado.precio,
+    precioOrigen: 'auto',
+    precioActualizado: resultadoNormalizado.cotizacion.consultadoEn,
+    cotizacion: resultadoNormalizado.cotizacion,
+  };
+}
+
+async function pedirPreciosCrudos(ids) {
+  const lista = [...new Set((ids || []).filter(Boolean))];
+  if (!lista.length) return { ok: true, resultados: {}, tiposCambio: {}, fuentesConError: [] };
+  const r = await fetch('/api/precios?ids=' + lista.map(encodeURIComponent).join(','));
+  return r.json();
+}
+// ==== FIN MOTOR DE PRECIOS ====
+
 const CRIPTO_CATALOGO = { label: 'Cripto', simbolos: ['Bitcoin', 'USDT (staking)'] };
 const PLATAFORMA_SUGERIDA_POR_CATEGORIA = { cedears:'IOL', acciones:'IOL', bonos:'IOL', obligaciones:'IOL', notas:'IOL', cripto:'BingX' };
 
