@@ -121,29 +121,25 @@ function pickPrice(row) {
 // valor tal cual lo publica la fuente, con su unidad y moneda. Para cripto
 // informa además el MEP por separado; la conversión la hace el cliente una vez.
 // ---------------------------------------------------------------------------
-// Transporte robusto: cada id va codificado con encodeURIComponent (una coma
-// dentro de un id viaja como %2C) y los ids se separan con comas literales.
-// Por eso se lee la query CRUDA de req.url y se decodifica cada id por separado:
-// req.query ya viene decodificado y no distinguiría ambas comas. También acepta
+// Lectura de ids. Se toma el valor YA DECODIFICADO de `ids` (de req.query, o de
+// req.url con URLSearchParams si no hay req.query) y se separa por comas. Así
+// "a,b" y "a%2Cb" dan lo mismo: Vercel puede re-codificar la coma literal como
+// %2C en req.url, por lo que la coma no puede distinguirse de una coma dentro
+// de un id. Consecuencia: un id no puede contener comas. También acepta
 // ?ids=a&ids=b. Devuelve null si no hay `ids` (ruta vieja).
 function leerIds(req) {
-  const url = req && typeof req.url === 'string' ? req.url : '';
-  const q = url.indexOf('?') >= 0 ? url.slice(url.indexOf('?') + 1) : '';
-  const crudos = q.split('&').filter(par => par.split('=')[0] === 'ids').map(par => par.slice(4));
-  let ids;
-  if (crudos.length) {
-    ids = [];
-    crudos.forEach(v => v.split(',').forEach(parte => {
-      try { ids.push(decodeURIComponent(parte.replace(/\+/g, ' '))); } catch (e) { ids.push(''); }
-    }));
-  } else if (req && req.query && req.query.ids) {
-    const v = req.query.ids; // respaldo si no hay req.url
-    ids = (Array.isArray(v) ? v : [v]).join(',').split(',');
-  } else {
-    return null;
+  let valores = [];
+  const q = req && req.query ? req.query.ids : undefined;
+  if (q !== undefined && q !== null) {
+    valores = Array.isArray(q) ? q : [q];
+  } else if (req && typeof req.url === 'string' && req.url.indexOf('?') >= 0) {
+    try { valores = new URLSearchParams(req.url.slice(req.url.indexOf('?') + 1)).getAll('ids'); } catch (e) { valores = []; }
   }
-  ids = [...new Set(ids.map(s => s.trim()).filter(Boolean))].slice(0, 100);
-  return ids.length ? ids : null;
+  if (!valores.length) return null;
+  const ids = [];
+  valores.forEach(v => String(v).split(',').forEach(parte => ids.push(parte)));
+  const unicos = [...new Set(ids.map(s => s.trim()).filter(Boolean))].slice(0, 100);
+  return unicos.length ? unicos : null;
 }
 
 async function preciosPorIds(ids, res) {
