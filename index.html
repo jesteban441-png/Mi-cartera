@@ -513,6 +513,33 @@ async function pedirPreciosCrudos(ids) {
   const r = await fetch('/api/precios?ids=' + lista.map(encodeURIComponent).join(','));
   return r.json();
 }
+
+// ---- Ruta vieja (lista fija por nombre) — Fase 1 ----
+// Cada posición recibe su precio por UNA sola ruta:
+//   - con instrumentoId  -> motor nuevo (todavía no conectado a las posiciones);
+//   - sin instrumentoId  -> ruta vieja, salvo que su precio sea manual.
+// La ruta vieja nunca toca units, avgPrice, name, fecha ni platform.
+function tieneInstrumento(p) {
+  return !!p && typeof p.instrumentoId === 'string' && p.instrumentoId.trim() !== '';
+}
+// precioOrigen: 'auto' o sin dato (posiciones anteriores a ese campo) siguen
+// actualizándose como siempre. 'manual' (o cualquier otro valor) se respeta.
+function puedeActualizarRutaVieja(p) {
+  if (!p || tieneInstrumento(p)) return false;
+  return p.precioOrigen === undefined || p.precioOrigen === null || p.precioOrigen === 'auto';
+}
+function aplicarPreciosRutaVieja(posiciones, preciosPorNombre, actualizadoEn) {
+  let actualizadas = 0, omitidasManuales = 0, omitidasVinculadas = 0;
+  const resultado = posiciones.map(p => {
+    if (tieneInstrumento(p)) { omitidasVinculadas++; return p; }
+    const precio = preciosPorNombre[norm(p && p.name)];
+    if (!precioCrudoValido(precio)) return p;
+    if (!puedeActualizarRutaVieja(p)) { omitidasManuales++; return p; }
+    actualizadas++;
+    return { ...p, currentPrice: precio, precioOrigen: 'auto', precioActualizado: actualizadoEn };
+  });
+  return { posiciones: resultado, actualizadas, omitidasManuales, omitidasVinculadas };
+}
 // ==== FIN MOTOR DE PRECIOS ====
 
 const CRIPTO_CATALOGO = { label: 'Cripto', simbolos: ['Bitcoin', 'USDT (staking)'] };
@@ -2687,11 +2714,11 @@ function App({ user }) {
       let updated = 0;
       const normPrices = {};
       Object.keys(data.prices || {}).forEach(k => { normPrices[norm(k)] = data.prices[k]; });
-      setPositions(prev => prev.map(p => {
-        const price = normPrices[norm(p.name)];
-        if (price > 0) { updated++; return { ...p, currentPrice: price, precioOrigen: 'auto', precioActualizado: data.updatedAt || new Date().toISOString() }; }
-        return p;
-      }));
+      setPositions(prev => {
+        const r = aplicarPreciosRutaVieja(prev, normPrices, data.updatedAt || new Date().toISOString());
+        updated = r.actualizadas;
+        return r.actualizadas ? r.posiciones : prev;
+      });
       if (data.usdArs) setUsdArs(data.usdArs);
       if (data.updatedAt) setLastUpdated(new Date(data.updatedAt).toLocaleString('es-AR', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }));
       let msg = `Actualizadas ${updated} posiciones.`;
