@@ -1,0 +1,98 @@
+// Motor de precios (5A): normalizacion, catalogo y API con fuentes simuladas.
+const ROOT=require('path').join(__dirname,'..');
+const fs=require('fs'),assert=require('assert');
+const html=fs.readFileSync(ROOT+'/index.html','utf8');
+const bloque=html.slice(html.indexOf('// ==== MOTOR DE PRECIOS'),html.indexOf('// ==== FIN MOTOR DE PRECIOS'));
+const M=new Function(bloque+';return {normalizarPrecio,aplicarCotizacion,MOTIVO_SIN_COTIZACION};')();
+const I=require(ROOT+'/api/_instrumentos.js');
+let n=0;const t=(k,f)=>{f();console.log('OK',k);n++;};
+const cru=(def,v,extra={})=>({id:def.id,ok:true,precioFuente:v,unidadFuente:def.unidadFuente,monedaFuente:def.moneda,fuente:def.fuente,consultadoEn:'2026-09-30T12:00:00Z',fechaCotizacion:null,...extra});
+// Definicion SINTETICA: el normalizador se prueba con independencia del catalogo
+// (desde 2B ninguna accion queda automatica por categoria).
+const acc={...I.definirData912('arg_stocks','GGAL',new Set(['GGAL'])),unidadFuente:'1',unidadApp:'1',factor:1,moneda:'ARS',estado:'soportado'};
+const bono=I.definirData912('arg_bonds','AL29',new Set(['AL29']));
+const fci={...I.definirFCI('x','Fondo Prueba'),unidadFuente:'1000CP',unidadApp:'1CP',factor:0.001,moneda:'ARS',estado:'soportado'};
+const btc=I.definirCripto('bitcoin');
+const MEP={MEP:{nombre:'MEP',valor:1500,fuente:'dolarapi',consultadoEn:'x'}};
+t('B accion 100x1=100',()=>assert.strictEqual(M.normalizarPrecio(cru(acc,100),acc).precio,100));
+t('C bono 82280x0.01=822.8',()=>assert.strictEqual(M.normalizarPrecio(cru(bono,82280),bono).precio,822.8));
+const rf=M.normalizarPrecio(cru(fci,1205.098,{fechaCotizacion:'2026-09-29'}),fci);
+t('D fci 1205.098x0.001=1.205098 + fecha real',()=>{assert.strictEqual(rf.precio,1.205098);assert.strictEqual(rf.cotizacion.fechaCotizacion,'2026-09-29');});
+const rb=M.normalizarPrecio(cru(btc,60000),btc,MEP);
+t('E cripto 60000x1500=90000000 y MEP registrado',()=>{assert.strictEqual(rb.precio,90000000);assert.deepStrictEqual(rb.cotizacion.tipoCambio,MEP.MEP);assert.strictEqual(rb.cotizacion.precioFuente,60000);});
+t('E2 cripto sin MEP: no actualiza',()=>{const r=M.normalizarPrecio(cru(btc,60000),btc,{MEP:{valor:null}});assert.strictEqual(r.ok,false);const p=M.aplicarCotizacion({currentPrice:5,units:1,avgPrice:2},r);assert.strictEqual(p.currentPrice,5);});
+const pos={id:'x',units:10,avgPrice:800,currentPrice:810};
+for(const [k,v] of [['F c=0',0],['G c vacio (null)',null],['G c undefined',undefined],['G c ""',''],['c negativo',-5],['c NaN',NaN],['c texto','123']])
+ t(k+': conserva precio anterior',()=>{const r=M.normalizarPrecio(cru(bono,v),bono);assert.strictEqual(r.ok,false);const p=M.aplicarCotizacion(pos,r);assert.strictEqual(p.currentPrice,810);assert.strictEqual(p.cotizacionAviso,M.MOTIVO_SIN_COTIZACION);});
+t('F2 bid no se usa',()=>{assert.strictEqual(M.normalizarPrecio({...cru(bono,0),px_bid:82000},bono).ok,false);});
+const on=I.definirData912('arg_corp','YFCGO',new Set(['YFCGO']));
+const let_=I.definirData912('arg_notes','S30O6',new Set(['S30O6']));
+const bnv=I.definirData912('arg_bonds','GD30',new Set(['GD30']));
+const usd=I.definirData912('arg_cedears','SPYD',new Set(['SPY','SPYD']));
+const ypfd=I.definirData912('arg_stocks','YPFD',new Set(['YPFD']));
+const fciOtro=I.definirFCI('rentaFija','Otro Fondo Clase A');
+t('H sin-verificar (ON, letra, bono no muestreado, variante D, FCI otro)',()=>{for(const d of [on,let_,bnv,usd,fciOtro]){assert.strictEqual(d.estado,'sin-verificar');assert.strictEqual(d.factor,null);assert.strictEqual(d.moneda,null);assert.strictEqual(M.normalizarPrecio(cru(d,100),d).ok,false);}});
+t('H2 YPFD no se toma como USD (base YPF no existe) y queda pendiente',()=>{assert.strictEqual(ypfd.posibleVarianteDe,undefined);assert.strictEqual(ypfd.estado,'sin-verificar');assert.strictEqual(ypfd.moneda,null);assert.strictEqual(ypfd.estadoOperativo,'MANUAL');});
+t('I una sola conversion: aplicar no reconvierte y la API no convierte',()=>{const r=M.normalizarPrecio(cru(bono,82280),bono);const p=M.aplicarCotizacion(pos,r);assert.strictEqual(p.currentPrice,822.8);assert.strictEqual(p.cotizacion.precioFuente,82280);assert.strictEqual(p.units,10);assert.strictEqual(p.avgPrice,800);});
+t('I2 unidad de fuente distinta a la del instrumento: rechaza',()=>{assert.strictEqual(M.normalizarPrecio(cru(bono,82280,{unidadFuente:'1'}),bono).ok,false);});
+t('I3 id que no coincide: rechaza',()=>{assert.strictEqual(M.normalizarPrecio({...cru(bono,82280),id:'otro'},bono).ok,false);});
+t('parsearId con ":" en la clave',()=>assert.deepStrictEqual(I.parsearId('argentinadatos:rentaFija:A: B'),{proveedor:'argentinadatos',panel:'rentaFija',clave:'A: B'}));
+// API handlers con fetch simulado
+const filasFCI=[{fondo:'MP Ahorro Clase A',fecha:'2026-09-29',vcp:1205.098}];
+const filas={arg_cedears:[{symbol:'SPY',c:50000,px_bid:1},{symbol:'SPYD',c:34},{symbol:'XLK',c:0}],arg_stocks:[{symbol:'GGAL',c:7000}],arg_bonds:[{symbol:'AL29',c:82280},{symbol:'GD30',c:90000}],arg_corp:[{symbol:'YFCGO',c:158690}],arg_notes:[]};
+global.fetch=async u=>{let body;
+ if(u.includes('data912'))body=filas[u.split('/').pop()];
+ else if(u.includes('argentinadatos'))body=u.includes('mercadoDinero')?filasFCI:[];
+ else if(u.includes('dolarapi'))body={compra:1490,venta:1510};
+ else if(u.includes('coingecko'))body={bitcoin:{usd:60000},tether:{usd:1}};
+ return {ok:true,json:async()=>body};};
+const mockRes=()=>{const r={h:{},setHeader(k,v){r.h[k]=v},status(c){r.c=c;return r},json(b){r.b=b;return r}};return r;};
+(async()=>{
+ const cat=mockRes();await require(ROOT+'/api/catalogo.js')({},cat);
+ t('J catalogo conserva simbolos y porCategoria',()=>{assert.ok(cat.b.ok);assert.deepStrictEqual(Object.keys(cat.b.porCategoria),['cedears','acciones','bonos','obligaciones','notas']);assert.deepStrictEqual(cat.b.porCategoria.cedears,{label:'CEDEARs',simbolos:['SPY','SPYD','XLK']});assert.ok(cat.b.simbolos.includes('AL29'));assert.ok(!cat.b.simbolos.includes('MP Ahorro Clase A'));});
+ t('J2 catalogo trae instrumentos con estados',()=>{const by=Object.fromEntries(cat.b.instrumentos.map(x=>[x.id,x]));assert.strictEqual(by['data912:arg_bonds:AL29'].factor,0.01);assert.strictEqual(by['data912:arg_bonds:GD30'].estado,'sin-verificar');assert.strictEqual(by['data912:arg_cedears:SPYD'].estado,'sin-verificar');assert.strictEqual(by['argentinadatos:mercadoDinero:MP Ahorro Clase A'].estado,'sin-verificar');assert.strictEqual(by['argentinadatos:mercadoDinero:MP Ahorro Clase A'].factor,null);assert.strictEqual(by['coingecko:simple:bitcoin'].moneda,'USD');});
+ const pr=mockRes();const ids=['data912:arg_bonds:AL29','data912:arg_cedears:XLK','argentinadatos:mercadoDinero:MP Ahorro Clase A','coingecko:simple:bitcoin','data912:arg_corp:YFCGO','data912:arg_stocks:NOEXISTE','basura'];
+ await require(ROOT+'/api/precios.js')({url:'/api/precios?ids='+ids.map(encodeURIComponent).join('%2C'),query:{ids:ids.join(',')}},pr);
+ const R=pr.b.resultados;
+ t('API devuelve crudo sin convertir',()=>{assert.strictEqual(R['data912:arg_bonds:AL29'].precioFuente,82280);assert.strictEqual(R['data912:arg_bonds:AL29'].unidadFuente,'100VN');assert.strictEqual(R['data912:arg_bonds:AL29'].fechaCotizacion,null);assert.strictEqual(R['coingecko:simple:bitcoin'].precioFuente,60000);assert.strictEqual(R['coingecko:simple:bitcoin'].monedaFuente,'USD');assert.strictEqual(pr.b.tiposCambio.MEP.valor,1500);});
+ t('API FCI con fecha real',()=>{const f=R['argentinadatos:mercadoDinero:MP Ahorro Clase A'];assert.strictEqual(f.precioFuente,1205.098);assert.strictEqual(f.fechaCotizacion,'2026-09-29');assert.ok(f.consultadoEn);});
+ t('API c=0 crudo, sin bid',()=>assert.strictEqual(R['data912:arg_cedears:XLK'].precioFuente,0));
+ t('API ON sin-verificar sin unidad',()=>{assert.strictEqual(R['data912:arg_corp:YFCGO'].estado,'sin-verificar');assert.strictEqual(R['data912:arg_corp:YFCGO'].unidadFuente,null);});
+ t('API inexistente e id invalido',()=>{assert.strictEqual(R['data912:arg_stocks:NOEXISTE'].ok,false);assert.strictEqual(R['basura'].ok,false);});
+ t('MP FCI quedan sin-verificar',()=>{for(const n of ['MP Ahorro Clase A','MP Empresas Argentinas Clase A','MP Empresas Argentinas - Clase A'])assert.strictEqual(I.definirFCI('rentaVariable',n).estado,'sin-verificar');});
+ const P=require(ROOT+'/api/precios.js');
+ // Simula Vercel: req.query decodificado y req.url con la coma re-codificada como %2C.
+ const llamar=async(qs)=>{const sp=new URLSearchParams(qs);const query={};for(const k of new Set(sp.keys())){const v=sp.getAll(k);query[k]=v.length>1?v:v[0];}const r=mockRes();await P({url:'/api/precios?'+qs.replace(/,/g,'%2C'),query},r);return r.b;};
+ const llamarSoloUrl=async(qs)=>{const r=mockRes();await P({url:'/api/precios?'+qs},r);return r.b;};
+ const claves=b=>Object.keys(b.resultados).sort();
+ let b1=await llamar('ids=data912%3Aarg_bonds%3AAL29');
+ t('T1 un id',()=>{assert.deepStrictEqual(claves(b1),['data912:arg_bonds:AL29']);assert.strictEqual(b1.resultados['data912:arg_bonds:AL29'].precioFuente,82280);});
+ for(const [id,v] of [['data912:arg_stocks:GGAL',7000],['coingecko:simple:bitcoin',60000]]){const bx=await llamar('ids='+encodeURIComponent(id));t('T1 individual '+id,()=>assert.strictEqual(bx.resultados[id].precioFuente,v));}
+ let b2=await llamar('ids=data912%3Aarg_bonds%3AAL29,data912%3Aarg_stocks%3AGGAL');
+ t('T2/T3 AL29 + GGAL separados por coma (URL de producción)',()=>{assert.deepStrictEqual(claves(b2),['data912:arg_bonds:AL29','data912:arg_stocks:GGAL']);assert.strictEqual(b2.resultados['data912:arg_bonds:AL29'].precioFuente,82280);assert.strictEqual(b2.resultados['data912:arg_stocks:GGAL'].precioFuente,7000);});
+ let b2b=await llamar('ids=data912%3Aarg_bonds%3AAL29%2Cdata912%3Aarg_stocks%3AGGAL');
+ t('T2 coma codificada %2C también separa',()=>assert.deepStrictEqual(claves(b2b),['data912:arg_bonds:AL29','data912:arg_stocks:GGAL']));
+ let b4=await llamar('ids=data912%3Aarg_bonds%3AAL29,coingecko%3Asimple%3Abitcoin');
+ t('T4 AL29 + Bitcoin con MEP',()=>{assert.deepStrictEqual(claves(b4),['coingecko:simple:bitcoin','data912:arg_bonds:AL29']);assert.strictEqual(b4.resultados['coingecko:simple:bitcoin'].monedaFuente,'USD');assert.strictEqual(b4.tiposCambio.MEP.valor,1500);});
+ let b5=await llamar('ids=data912:arg_bonds:AL29&ids=coingecko:simple:bitcoin');
+ t('T4b ?ids=a&ids=b',()=>assert.deepStrictEqual(claves(b5),['coingecko:simple:bitcoin','data912:arg_bonds:AL29']));
+ let b5u=await llamarSoloUrl('ids=data912:arg_bonds:AL29,data912:arg_stocks:GGAL&ids=coingecko:simple:bitcoin');
+ t('T4c respaldo solo req.url (comas + repetidos)',()=>assert.deepStrictEqual(claves(b5u),['coingecko:simple:bitcoin','data912:arg_bonds:AL29','data912:arg_stocks:GGAL']));
+ let b6=await llamar('ids=data912:arg_bonds:AL29,data912%3Aarg_bonds%3AAL29, data912:arg_bonds:AL29 ,&ids=data912:arg_bonds:AL29');
+ t('T5 duplicados y vacíos se unifican',()=>assert.deepStrictEqual(claves(b6),['data912:arg_bonds:AL29']));
+ filasFCI.push({fondo:'MP Ahorro - Clase A',fecha:'2026-09-29',vcp:1206.333},{fondo:'Fondo & Más: Clase Ñ',fecha:'2026-09-29',vcp:10});
+ let b7=await llamar('ids='+['argentinadatos:mercadoDinero:MP Ahorro - Clase A','argentinadatos:mercadoDinero:Fondo & Más: Clase Ñ','data912:arg_bonds:AL29'].map(encodeURIComponent).join(','));
+ t('T6 caracteres especiales (espacios, guion, &, :, acentos, Ñ)',()=>{assert.strictEqual(b7.resultados['argentinadatos:mercadoDinero:MP Ahorro - Clase A'].precioFuente,1206.333);assert.strictEqual(b7.resultados['argentinadatos:mercadoDinero:Fondo & Más: Clase Ñ'].precioFuente,10);assert.strictEqual(b7.resultados['data912:arg_bonds:AL29'].precioFuente,82280);});
+ let b7b=await llamar('ids=MP+Ahorro');
+ t('T6b "+" se lee como espacio, id inválido no rompe',()=>{assert.ok(b7b.ok);assert.strictEqual(b7b.resultados['MP Ahorro'].ok,false);});
+ let b8=await llamar('');
+ t('T7 sin ids -> ruta vieja',()=>{assert.ok(b8.prices);assert.ok(!b8.resultados);});
+ let b8b=await llamar('ids=');
+ t('T7b ids vacío -> ruta vieja',()=>{assert.ok(b8b.prices);assert.ok(!b8b.resultados);});
+ const pedidos=[];const f0=global.fetch;global.fetch=async u=>{pedidos.push(u);return f0(u);};
+ const pc5=mockRes();await require(ROOT+'/api/precios.js')({url:'/api/precios?ids=data912:arg_bonds:AL29',query:{ids:'data912:arg_bonds:AL29'}},pc5);global.fetch=f0;
+ t('Solo consulta los paneles necesarios',()=>assert.deepStrictEqual(pedidos,['https://data912.com/live/arg_bonds']));
+ const vieja=mockRes();await require(ROOT+'/api/precios.js')({query:{}},vieja);
+ t('Ruta vieja sin ids intacta',()=>{assert.ok(vieja.b.ok);assert.strictEqual(vieja.b.prices.SPY,50000);assert.strictEqual(vieja.b.prices.Bitcoin,90000000);});
+ console.log('\n'+n+' pruebas OK');
+})().catch(e=>{console.error('FALLA',e);process.exit(1)});

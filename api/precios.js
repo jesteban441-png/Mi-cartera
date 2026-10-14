@@ -147,7 +147,26 @@ async function preciosPorIds(ids, res) {
     const consultadoEn = new Date().toISOString();
     const resultados = {};
     const grupos = {}; // "proveedor:panel" -> [{ id, clave }]
+
+    // Ids estables de FCI ("fci:..."): solo se resuelven por la tabla de
+    // asociaciones explícitas (id <-> categoría <-> nombre exacto). No se busca el
+    // fondo recorriendo categorías. Se consulta con el id con categoría (el de
+    // siempre) y la respuesta se devuelve también bajo el id estable pedido.
+    const alias = {}; // idEstable pedido -> id interno con categoría
+    const pedidosDirectos = new Set();
+    const internos = [];
     ids.forEach(id => {
+      const t = I.resolverIdFCI(id);
+      if (t === null) { pedidosDirectos.add(id); internos.push(id); return; }
+      if (t.error) { resultados[id] = { id, ok: false, motivo: t.error }; return; }
+      alias[id] = t.idInterno;
+      internos.push(t.idInterno);
+    });
+
+    // Datos de validación del catálogo (informativos; no cambian el precio crudo).
+    const validacion = def => ({ factorEstado: def.factorEstado, estadoOperativo: def.estadoOperativo, validacion: def.validacion, regla: def.regla });
+
+    [...new Set(internos)].forEach(id => {
       const p = I.parsearId(id);
       if (!p) { resultados[id] = { id, ok: false, motivo: 'id inválido' }; return; }
       const g = `${p.proveedor}:${p.panel}`;
@@ -171,7 +190,7 @@ async function preciosPorIds(ids, res) {
           if (!fila) { resultados[id] = { id, ok: false, motivo: 'no figura en el panel' }; return; }
           const def = I.definirData912(panel, clave.toUpperCase(), simbolosPanel);
           resultados[id] = {
-            id, ok: true, estado: def.estado,
+            id, ok: true, estado: def.estado, ...validacion(def),
             precioFuente: fila.c === undefined ? null : fila.c, // crudo: se valida en el cliente
             unidadFuente: def.unidadFuente, monedaFuente: def.moneda,
             fuente: { proveedor, panel, clave: def.simbolo, campo: 'c' },
@@ -187,7 +206,7 @@ async function preciosPorIds(ids, res) {
           if (!fila) { resultados[id] = { id, ok: false, motivo: 'no figura en la categoría' }; return; }
           const def = I.definirFCI(panel, clave);
           resultados[id] = {
-            id, ok: true, estado: def.estado,
+            id, ok: true, estado: def.estado, ...validacion(def),
             precioFuente: fila.vcp === undefined ? null : fila.vcp,
             unidadFuente: def.unidadFuente, monedaFuente: def.moneda,
             fuente: { proveedor, panel, clave, campo: 'vcp' },
@@ -206,17 +225,29 @@ async function preciosPorIds(ids, res) {
           const def = I.definirCripto(clave);
           const usd = data[clave] ? data[clave].usd : undefined;
           resultados[id] = {
-            id, ok: true, estado: def.estado,
+            id, ok: true, estado: def.estado, ...validacion(def),
             precioFuente: usd === undefined ? null : usd,
             unidadFuente: def.unidadFuente, monedaFuente: def.moneda,
             fuente: { proveedor, panel, clave, campo: 'usd' },
             consultadoEn, fechaCotizacion: null,
           };
         });
+      } else if (proveedor === 'efectivo') {
+        // El efectivo no cotiza: no hay precio que devolver.
+        items.forEach(({ id }) => { resultados[id] = { id, ok: false, motivo: 'efectivo: no tiene cotización', estado: 'solo-manual', estadoOperativo: 'MANUAL', validacion: 'manual-sin-fuente' }; });
       } else {
         items.forEach(({ id }) => { resultados[id] = { id, ok: false, motivo: 'proveedor o panel desconocido' }; });
       }
     }));
+
+    // Respuesta bajo el id estable pedido (el id con categoría solo queda si
+    // también se pidió directamente).
+    Object.keys(alias).forEach(pedido => {
+      const interno = alias[pedido];
+      const base = resultados[interno];
+      resultados[pedido] = { ...base, id: pedido, idInterno: interno };
+      if (!pedidosDirectos.has(interno)) delete resultados[interno];
+    });
 
     // Tipo de cambio informado aparte, sin aplicarlo.
     const tiposCambio = {};

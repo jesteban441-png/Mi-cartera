@@ -6,10 +6,29 @@
 // Se cachea 1 día porque el catálogo cambia poco (a diferencia de los precios).
 //
 // Además (motor de precios genérico), devuelve `instrumentos`: cada instrumento
-// descripto con id estable, fuente, unidad, factor, moneda y estado
-// (soportado / sin-verificar / solo-manual). Incluye los FCI de ArgentinaDatos y
-// la cripto. `simbolos` y `porCategoria` se mantienen igual que antes.
+// descripto con id, categoría, fuente, unidad, factor, moneda y estado. Desde la
+// Fase 2B cada uno informa también factorEstado (CONFIRMADO / CONTRASTADO /
+// PENDIENTE), estadoOperativo (AUTOMATICO / MANUAL) y validacion. Incluye los FCI
+// de ArgentinaDatos (con id estable provisional y control de colisiones), la
+// cripto y el efectivo (Pesos, sin cotización). `simbolos` y `porCategoria` se
+// mantienen igual que antes.
+//
+// Búsqueda: /api/catalogo?q=texto[&limite=20] devuelve `resultados` buscando por
+// símbolo, nombre y alias curados (api/_alias.js). No consulta ninguna fuente extra.
 const I = require('./_instrumentos');
+const A = require('./_alias');
+
+function leerTexto(req, nombre) {
+  const q = req && req.query ? req.query[nombre] : undefined;
+  if (q !== undefined && q !== null) return Array.isArray(q) ? String(q[0] == null ? '' : q[0]) : String(q);
+  if (req && typeof req.url === 'string' && req.url.indexOf('?') >= 0) {
+    try {
+      const v = new URLSearchParams(req.url.slice(req.url.indexOf('?') + 1)).get(nombre);
+      return v == null ? undefined : v;
+    } catch (e) { return undefined; }
+  }
+  return undefined;
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=172800');
@@ -37,6 +56,10 @@ module.exports = async function handler(req, res) {
       porCategoria[p.key] = { label: p.label, simbolos: [...lista].sort() };
       [...lista].sort().forEach(s => instrumentos.push(I.definirData912(p.url, s, lista)));
     });
+
+    // FCI: se listan por categoría de la fuente; el id estable (provisional) se
+    // quita si dos fondos distintos darían el mismo id (nunca se fusionan).
+    const fondos = [];
     I.CATEGORIAS_FCI.forEach((cat, i) => {
       const arr = resultadosFCI[i];
       if (!Array.isArray(arr)) return;
@@ -44,12 +67,43 @@ module.exports = async function handler(req, res) {
       arr.forEach(f => {
         if (f && typeof f.fondo === 'string' && f.fondo.trim() && !vistos.has(f.fondo)) {
           vistos.add(f.fondo);
-          instrumentos.push(I.definirFCI(cat, f.fondo));
+          fondos.push({ categoria: cat, nombre: f.fondo });
         }
       });
     });
+    const colisionesFCI = I.detectarColisionesFCI(fondos);
+    fondos.forEach(f => {
+      const def = I.definirFCI(f.categoria, f.nombre);
+      if (def.idEstable && colisionesFCI[def.idEstable]) {
+        def.idEstableEnColision = def.idEstable;
+        def.idEstable = null;
+      }
+      instrumentos.push(def);
+    });
+
     Object.keys(I.CRIPTO).forEach(id => instrumentos.push(I.definirCripto(id)));
-    res.status(200).json({ ok: true, simbolos: [...simbolos].sort(), porCategoria, instrumentos, updatedAt: new Date().toISOString() });
+    Object.keys(I.EFECTIVO).forEach(id => instrumentos.push(I.definirEfectivo(id)));
+
+    const q = leerTexto(req, 'q');
+    if (q !== undefined) {
+      const lim = parseInt(leerTexto(req, 'limite'), 10);
+      res.status(200).json({
+        ok: true, q,
+        resultados: A.buscarInstrumentos(q, instrumentos, Number.isFinite(lim) ? lim : undefined),
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      simbolos: [...simbolos].sort(),
+      porCategoria,
+      instrumentos,
+      reglas: I.resumenReglas(),
+      colisionesFCI: Object.keys(colisionesFCI),
+      updatedAt: new Date().toISOString(),
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e && e.message ? e.message : e), simbolos: [], porCategoria: {}, instrumentos: [] });
   }
