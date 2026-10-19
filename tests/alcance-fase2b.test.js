@@ -2,8 +2,9 @@
 // y que las pruebas no afectan el despliegue. Mide además el tamaño del catálogo.
 //
 // Las comparaciones contra el commit base (8f56573, fin de la Fase 1) valen
-// mientras index.html y la ruta vieja no cambien a propósito (Fase 3). Cuando eso
-// se haga, actualizar BASE o retirar esas dos pruebas.
+// mientras index.html y la ruta vieja no cambien a propósito. Fase 3.0 solo
+// agregó un bloque de funciones puras; al conectar el motor (3.1) hay que
+// actualizar esta guarda.
 const assert = require('assert');
 const fs = require('fs');
 const cp = require('child_process');
@@ -17,8 +18,16 @@ try { git(['cat-file', '-e', BASE + '^{commit}']); } catch (e) { hayBase = false
 const conBase = (nombre, f) => (hayBase ? t(nombre, f) : console.log('SALTADA ' + nombre + ' (no está el commit ' + BASE + ')'));
 
 (async () => {
-  conBase('index.html es idéntico al de la Fase 1 (formulario, posiciones, guardado y metas sin cambios)', () => {
-    assert.strictEqual(fs.readFileSync(ROOT + '/index.html', 'utf8'), git(['show', BASE + ':index.html']));
+  // Fase 3.0 agregó UN bloque de funciones puras sin conectar. Fuera de ese bloque,
+  // index.html tiene que seguir idéntico al de la Fase 1 (formulario, posiciones, guardado y metas).
+  conBase('index.html = Fase 1 + únicamente el bloque de funciones puras de la Fase 3.0 (sin cambios en interfaz, guardado ni posiciones)', () => {
+    const ahora = fs.readFileSync(ROOT + '/index.html', 'utf8');
+    const i = ahora.indexOf('\n// ==== VINCULACIÓN DE POSICIONES (Fase 3.0)');
+    const finMarca = '// ==== FIN VINCULACIÓN DE POSICIONES ====\n';
+    const j = ahora.indexOf(finMarca);
+    assert.ok(i > 0 && j > i, 'bloque 3.0 presente');
+    assert.strictEqual(ahora.indexOf('// ==== VINCULACIÓN DE POSICIONES (Fase 3.0)', i + 5), -1, 'un solo bloque');
+    assert.strictEqual(ahora.slice(0, i) + ahora.slice(j + finMarca.length), git(['show', BASE + ':index.html']));
   });
 
   conBase('La ruta antigua de precios.js (TICKERS y cálculo sin ids) es idéntica', () => {

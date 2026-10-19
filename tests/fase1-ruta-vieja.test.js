@@ -108,7 +108,9 @@ async function correr(inicial){
     const setters=[...new Set(src.match(/\bset[A-Z]\w*\(/g))].sort();
     assert.deepStrictEqual(setters,['setLastUpdated(','setLiveLoading(','setLiveStatus(','setPositions(','setUsdArs(']);});
   t('El motor nuevo NO se invoca desde ninguna parte de la app (solo se define)',()=>{
-    const fuera=html.slice(0,html.indexOf('// ==== MOTOR DE PRECIOS'))+html.slice(html.indexOf('// ==== FIN MOTOR DE PRECIOS'));
+    // Fase 3.0 agregó un segundo bloque de funciones puras (también sin conectar): se excluye igual que el motor.
+    const sinBloque=(h,a,b)=>{const i=h.indexOf(a),j=h.indexOf(b);return i<0?h:h.slice(0,i)+h.slice(j);};
+    const fuera=sinBloque(sinBloque(html,'// ==== VINCULACIÓN DE POSICIONES','// ==== FIN VINCULACIÓN DE POSICIONES'),'// ==== MOTOR DE PRECIOS','// ==== FIN MOTOR DE PRECIOS');
     for(const f of ['pedirPreciosCrudos','aplicarCotizacion','normalizarPrecio'])assert.ok(!new RegExp('\\b'+f+'\\b').test(fuera),f+' se usa fuera del bloque');
     assert.ok(!/api\/precios\?ids/.test(fuera.replace(/\/\/.*$/gm,'')));});
   t('La lógica de guardado versionado no cambió (fusionarCampo, runTransaction, rev)',()=>{

@@ -542,6 +542,295 @@ function aplicarPreciosRutaVieja(posiciones, preciosPorNombre, actualizadoEn) {
 }
 // ==== FIN MOTOR DE PRECIOS ====
 
+// ==== VINCULACIÓN DE POSICIONES (Fase 3.0) ====
+// Funciones PURAS (sin red, sin Date.now, sin tocar estado ni Firestore) para
+// conectar posiciones con instrumentos del catálogo. NINGUNA está conectada a la
+// interfaz ni al motor todavía: se agregan para probarlas aisladas (Bloque 3.0).
+// Reglas que garantizan:
+//   - nunca cambian id, name, platform, fecha, units ni avgPrice;
+//   - nunca devuelven `undefined` (Firestore lo rechaza): usan null o no ponen la clave;
+//   - cada posición la actualiza UN solo motor (motorDePosicion);
+//   - vincular guarda una foto exacta del estado de precio (vinculo.previo);
+//   - desvincular conserva el último precio y pasa a MANUAL; restaurar el precio
+//     previo es una acción aparte y explícita (restaurarPrecioPrevio).
+// Modelo de campos nuevos (todos opcionales, aditivos):
+//   instrumentoId : string — identidad técnica; su presencia = posición vinculada.
+//   vinculo       : { en, instrumentoId, previo, hasta? } — metadatos. `previo` es la
+//                   foto de CAMPOS_PRECIO al vincular; `hasta` aparece al desvincular.
+const CAMPOS_PRECIO = ['currentPrice', 'precioOrigen', 'precioActualizado', 'cotizacion', 'cotizacionAviso'];
+const UMBRAL_ADVERTENCIA_VINCULO_PCT = 10;
+const MONEDA_APP = 'ARS';
+const FACTOR_ESTADOS_VALIDOS = ['CONFIRMADO', 'CONTRASTADO'];
+
+function textoNoVacio(v) { return typeof v === 'string' && v.trim() !== ''; }
+function tienePropia(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+function clonar(x) { return x === undefined ? null : JSON.parse(JSON.stringify(x)); }
+function milis(s) { const t = typeof s === 'string' ? Date.parse(s) : NaN; return Number.isFinite(t) ? t : null; }
+
+// Mapa id → instrumento (para motorDePosicion). Un id repetido es ambiguo: se excluye.
+function indexarCatalogo(instrumentos) {
+  const mapa = Object.create(null), repetidos = new Set();
+  (instrumentos || []).forEach(i => {
+    if (!i || !textoNoVacio(i.id)) return;
+    if (tienePropia(mapa, i.id)) repetidos.add(i.id); else mapa[i.id] = i;
+  });
+  repetidos.forEach(id => { delete mapa[id]; });
+  return mapa;
+}
+function instrumentoDe(catalogo, id) {
+  return catalogo && textoNoVacio(id) && tienePropia(catalogo, id) ? catalogo[id] : null;
+}
+// AUTOMÁTICO = estado heredado 'soportado' y, si vienen, estadoOperativo/factorEstado válidos.
+function esInstrumentoAutomatico(i) {
+  if (!i || i.estado !== 'soportado' || !textoNoVacio(i.id)) return false;
+  if (i.estadoOperativo !== undefined && i.estadoOperativo !== 'AUTOMATICO') return false;
+  if (i.factorEstado !== undefined && !FACTOR_ESTADOS_VALIDOS.includes(i.factorEstado)) return false;
+  return true;
+}
+function origenPermiteActualizacionAutomatica(p) {
+  return !!p && (p.precioOrigen === undefined || p.precioOrigen === null || p.precioOrigen === 'auto');
+}
+
+// QUIÉN actualiza el precio de una posición: 'nuevo' | 'viejo' | 'ninguno'. Es la
+// única decisión; las dos rutas tienen que consultarla (así nunca coinciden).
+//   con instrumentoId : 'nuevo' solo si el instrumento es AUTOMÁTICO y el precio no es manual;
+//   sin instrumentoId : 'viejo' (elegible; si el nombre está en la lista fija) salvo precio manual.
+function motorDePosicion(p, catalogo) {
+  if (!p || typeof p !== 'object') return 'ninguno';
+  if (tieneInstrumento(p)) {
+    if (!origenPermiteActualizacionAutomatica(p)) return 'ninguno';
+    const i = instrumentoDe(catalogo, p.instrumentoId);
+    return esInstrumentoAutomatico(i) && i.id === p.instrumentoId ? 'nuevo' : 'ninguno';
+  }
+  return puedeActualizarRutaVieja(p) ? 'viejo' : 'ninguno';
+}
+
+function cotizacionActual(p) { return p && precioCrudoValido(p.currentPrice) ? p.currentPrice : null; }
+
+// Estado para mostrar: 'actualizando' | 'automatica' | 'manual' | 'sin-cotizacion' | 'ruta-vieja'.
+function estadoCotizacion(p, catalogo) {
+  const motor = motorDePosicion(p, catalogo);
+  const hayPrecio = cotizacionActual(p) !== null;
+  if (motor === 'nuevo') {
+    if (!hayPrecio) return 'actualizando';
+    const vinc = milis(p.vinculo && p.vinculo.en), act = milis(p.precioActualizado);
+    if (vinc !== null && (act === null || act < vinc)) return 'actualizando'; // el precio es anterior al vínculo
+    return 'automatica';
+  }
+  if (!hayPrecio) return 'sin-cotizacion';
+  return motor === 'viejo' ? 'ruta-vieja' : 'manual';
+}
+
+// Ganancia/pérdida SIN inventar 0 %: sin cotización actual, valor/ganancia/porcentaje son null.
+function calcularRendimiento(p) {
+  const u = p && p.units, a = p && p.avgPrice;
+  const invertido = precioCrudoValido(u) && precioCrudoValido(a) ? u * a : null;
+  const precio = cotizacionActual(p);
+  if (invertido === null || precio === null) return { invertido, valor: null, ganancia: null, gananciaPct: null };
+  const valor = u * precio, ganancia = valor - invertido;
+  return { invertido, valor, ganancia, gananciaPct: ganancia / invertido * 100 };
+}
+
+// ¿Se puede vincular esta posición a este instrumento? Bloqueos (no se puede) y
+// advertencias (se puede, pero hay que confirmarlas una por una).
+// opts: { cotizacion: precio ya normalizado en pesos (o null), cantidadConfirmada: unidad de
+//         cantidad que el usuario confirmó para la posición (debe ser la unidadApp del instrumento) }
+function evaluarVinculo(p, instrumento, opts) {
+  opts = opts || {};
+  const bloqueos = [], advertencias = [];
+  const bloq = (codigo, mensaje) => bloqueos.push({ codigo, mensaje });
+  const adv = (codigo, mensaje) => advertencias.push({ codigo, mensaje });
+  let diferenciaPct = null;
+  if (!p || typeof p !== 'object' || !textoNoVacio(p.id)) bloq('posicion-invalida', 'La posición no es válida.');
+  else {
+    if (tieneInstrumento(p)) bloq('ya-vinculada', 'La posición ya está vinculada a un instrumento.');
+    if (!precioCrudoValido(p.units) || !precioCrudoValido(p.avgPrice)) bloq('posicion-sin-datos', 'La posición no tiene cantidad o precio de compra válidos.');
+  }
+  if (!esInstrumentoAutomatico(instrumento)) bloq('instrumento-no-automatico', 'El instrumento no tiene cotización automática verificada.');
+  else {
+    const mon = instrumento.moneda;
+    const conv = instrumento.conversion;
+    if (mon === MONEDA_APP) { /* compatible */ }
+    else if (mon === 'USD' && conv && conv.a === MONEDA_APP && textoNoVacio(conv.tipoCambio)) { /* compatible vía conversión */ }
+    else bloq('moneda-incompatible', 'La moneda del instrumento no se puede expresar en ' + MONEDA_APP + ' de forma verificada.');
+    if (!textoNoVacio(instrumento.unidadFuente) || !textoNoVacio(instrumento.unidadApp) || !precioCrudoValido(instrumento.factor)) bloq('unidad-no-verificada', 'La unidad o el factor del instrumento no están verificados.');
+    else if (opts.cantidadConfirmada !== instrumento.unidadApp) bloq('cantidad-no-confirmada', 'Falta confirmar que la cantidad de la posición está expresada en ' + instrumento.unidadApp + '.');
+  }
+  if (bloqueos.length === 0) {
+    if (p.precioOrigen === 'manual') adv('precio-manual', 'El precio manual actual será reemplazado por la cotización automática.');
+    const actual = cotizacionActual(p);
+    if (actual !== null) {
+      if (!precioCrudoValido(opts.cotizacion)) adv('sin-comparacion', 'No hay cotización nueva para comparar con el precio actual.');
+      else {
+        diferenciaPct = Math.round(Math.abs(opts.cotizacion - actual) / actual * 1e4) / 100;
+        if (diferenciaPct > UMBRAL_ADVERTENCIA_VINCULO_PCT) adv('diferencia-precio', 'La cotización nueva difiere ' + diferenciaPct + ' % del precio actual (más del ' + UMBRAL_ADVERTENCIA_VINCULO_PCT + ' %).');
+      }
+    }
+  }
+  return { puede: bloqueos.length === 0, bloqueos, advertencias, diferenciaPct };
+}
+
+// Vincula. opts: los de evaluarVinculo + { ahora: ISO, confirmadas: [códigos de advertencia aceptados] }.
+// Solo agrega instrumentoId y vinculo, y deja precioOrigen en 'auto'. No toca units, avgPrice,
+// fecha, platform, name ni el precio actual (el motor lo reemplazará con la próxima cotización).
+function vincularPosicion(p, instrumento, opts) {
+  opts = opts || {};
+  const ev = evaluarVinculo(p, instrumento, opts);
+  if (!textoNoVacio(opts.ahora)) ev.bloqueos.push({ codigo: 'sin-fecha', mensaje: 'Falta la fecha de la operación.' });
+  const confirmadas = Array.isArray(opts.confirmadas) ? opts.confirmadas : [];
+  const sinConfirmar = ev.advertencias.filter(a => !confirmadas.includes(a.codigo));
+  if (ev.bloqueos.length || sinConfirmar.length) {
+    return { ok: false, bloqueos: ev.bloqueos, advertencias: sinConfirmar, diferenciaPct: ev.diferenciaPct };
+  }
+  const previo = {};
+  CAMPOS_PRECIO.forEach(k => { if (tienePropia(p, k)) previo[k] = clonar(p[k]); });
+  const posicion = {
+    ...p,
+    instrumentoId: instrumento.id,
+    precioOrigen: 'auto',
+    vinculo: { en: opts.ahora, instrumentoId: instrumento.id, previo },
+  };
+  return { ok: true, posicion, diferenciaPct: ev.diferenciaPct };
+}
+
+// Desvincula: quita instrumentoId, CONSERVA el último precio (y su fecha) y pasa a MANUAL.
+// Conserva vinculo (cerrado con `hasta`) para poder restaurar el precio previo si se pide.
+function desvincularPosicion(p, ahora) {
+  if (!tieneInstrumento(p)) return { ok: false, motivo: 'La posición no está vinculada.' };
+  if (!textoNoVacio(ahora)) return { ok: false, motivo: 'Falta la fecha de la operación.' };
+  const { instrumentoId, cotizacion, cotizacionAviso, vinculo, ...resto } = p;
+  const v = vinculo && typeof vinculo === 'object' ? vinculo : {};
+  return {
+    ok: true,
+    posicion: {
+      ...resto,
+      precioOrigen: 'manual',
+      vinculo: { en: v.en === undefined ? null : v.en, instrumentoId, previo: v.previo === undefined ? null : v.previo, hasta: ahora },
+    },
+  };
+}
+
+// Restaura la foto de precio anterior al vínculo. Solo para posiciones DESVINCULADAS y
+// solo si el usuario lo pide: nunca se llama sola. Consume vinculo.
+function restaurarPrecioPrevio(p) {
+  if (!p || tieneInstrumento(p)) return { ok: false, motivo: 'Primero hay que desvincular la posición.' };
+  const v = p.vinculo;
+  if (!v || typeof v !== 'object' || !textoNoVacio(v.hasta) || !v.previo || typeof v.previo !== 'object') return { ok: false, motivo: 'No hay un precio previo guardado.' };
+  const { vinculo, ...resto } = p;
+  CAMPOS_PRECIO.forEach(k => { delete resto[k]; });
+  CAMPOS_PRECIO.forEach(k => { if (tienePropia(v.previo, k)) resto[k] = clonar(v.previo[k]); });
+  return { ok: true, posicion: resto, precioReemplazado: cotizacionActual(p) };
+}
+
+// Edición manual del precio actual. valor: número > 0, o null/'' para dejar la posición sin cotización.
+function editarPrecioManual(p, valor, ahora) {
+  if (!p || typeof p !== 'object') return { ok: false, motivo: 'Posición inválida.' };
+  const vacio = valor === null || valor === undefined || (typeof valor === 'string' && valor.trim() === '');
+  const num = vacio ? null : (typeof valor === 'number' ? valor : NaN);
+  if (!vacio && !precioCrudoValido(num)) return { ok: false, motivo: 'El precio tiene que ser un número mayor a 0.' };
+  if (!vacio && !textoNoVacio(ahora)) return { ok: false, motivo: 'Falta la fecha de la operación.' };
+  const { cotizacion, cotizacionAviso, ...resto } = p;
+  return { ok: true, posicion: { ...resto, currentPrice: num, precioOrigen: 'manual', precioActualizado: vacio ? null : ahora } };
+}
+
+// Vuelve a automático una posición vinculada cuyo precio estaba en manual (acción explícita).
+function volverAAutomatico(p, instrumento) {
+  if (!tieneInstrumento(p) || p.precioOrigen !== 'manual') return { ok: false, motivo: 'La posición no está vinculada con precio manual.' };
+  if (!esInstrumentoAutomatico(instrumento) || instrumento.id !== p.instrumentoId) return { ok: false, motivo: 'El instrumento no tiene cotización automática verificada.' };
+  return { ok: true, posicion: { ...p, precioOrigen: 'auto' } };
+}
+
+// Foto de la posición al INICIAR una consulta de cotización. Se compara al aplicar la respuesta.
+function iniciarActualizacion(p) {
+  return {
+    id: p ? p.id : null,
+    instrumentoId: tieneInstrumento(p) ? p.instrumentoId : null,
+    precioOrigen: p && p.precioOrigen !== undefined ? p.precioOrigen : null,
+    precioActualizado: p && p.precioActualizado !== undefined ? p.precioActualizado : null,
+    currentPrice: p && p.currentPrice !== undefined ? p.currentPrice : null,
+    vinculoEn: p && p.vinculo && p.vinculo.en !== undefined ? p.vinculo.en : null,
+  };
+}
+// Aplica una cotización SOLO si la posición sigue igual que cuando se pidió. Si el usuario editó el
+// precio a mano, desvinculó, borró la posición o llegó una cotización más nueva, se descarta.
+// `posicionActual` es la versión de AHORA (no la del momento de pedir). Nunca toca units/avgPrice.
+function aplicarCotizacionVigente(posicionActual, token, normalizado, catalogo) {
+  const descartar = (motivo) => ({ aplicada: false, motivo, posicion: posicionActual || null });
+  if (!posicionActual) return descartar('posicion-eliminada');
+  if (!token || token.id !== posicionActual.id) return descartar('otra-posicion');
+  if (motorDePosicion(posicionActual, catalogo) !== 'nuevo') return descartar('ya-no-es-automatica');
+  const ahora = iniciarActualizacion(posicionActual);
+  if (Object.keys(ahora).some(k => ahora[k] !== token[k])) return descartar('cambio-durante-la-consulta');
+  if (!normalizado || !normalizado.ok) return { aplicada: false, motivo: 'sin-cotizacion-valida', posicion: aplicarCotizacion(posicionActual, normalizado) };
+  const nueva = milis(normalizado.cotizacion && normalizado.cotizacion.consultadoEn), previa = milis(posicionActual.precioActualizado);
+  if (nueva !== null && previa !== null && nueva < previa) return descartar('cotizacion-antigua');
+  return { aplicada: true, motivo: 'ok', posicion: aplicarCotizacion(posicionActual, normalizado) };
+}
+
+// Alta desde el catálogo: nombre = símbolo del instrumento (no editable aquí), identidad = instrumentoId.
+// datos: { platform, units, avgPrice, fecha, currentPrice? }. opts: { id, ahora, plataformas }.
+// Instrumento AUTOMÁTICO: sin precio todavía ('auto', currentPrice null → "Actualizando cotización...").
+// Instrumento MANUAL: precio actual opcional; si falta, queda sin cotización (null), nunca 0.
+function crearPosicionDesdeInstrumento(instrumento, datos, opts) {
+  opts = opts || {}; datos = datos || {};
+  const err = (motivo) => ({ ok: false, motivo });
+  if (!instrumento || !textoNoVacio(instrumento.id)) return err('Instrumento inválido.');
+  const nombre = textoNoVacio(instrumento.simbolo) ? instrumento.simbolo.trim() : '';
+  if (!nombre) return err('El instrumento no tiene símbolo.');
+  if (!textoNoVacio(opts.id)) return err('Falta el identificador de la posición.');
+  if (!textoNoVacio(opts.ahora)) return err('Falta la fecha de la operación.');
+  const plataformas = opts.plataformas || PLATFORMS;
+  if (!plataformas.includes(datos.platform)) return err('Elegí una plataforma de la lista.');
+  if (!precioCrudoValido(datos.units)) return err('Las unidades tienen que ser mayores a 0.');
+  if (!precioCrudoValido(datos.avgPrice)) return err('El precio de compra tiene que ser mayor a 0.');
+  if (!textoNoVacio(datos.fecha) || !/^\d{4}-\d{2}-\d{2}$/.test(datos.fecha) || milis(datos.fecha) === null) return err('La fecha de compra no es válida.');
+  const sinPrecio = datos.currentPrice === undefined || datos.currentPrice === null || (typeof datos.currentPrice === 'string' && datos.currentPrice.trim() === '');
+  const base = { id: opts.id, name: nombre, platform: datos.platform, fecha: datos.fecha, units: datos.units, avgPrice: datos.avgPrice, instrumentoId: instrumento.id };
+  if (esInstrumentoAutomatico(instrumento)) {
+    if (!sinPrecio) return err('Este instrumento se cotiza solo: no hace falta cargar el precio actual.');
+    return { ok: true, posicion: { ...base, currentPrice: null, precioOrigen: 'auto', precioActualizado: null } };
+  }
+  if (sinPrecio) return { ok: true, posicion: { ...base, currentPrice: null, precioOrigen: 'manual', precioActualizado: null } };
+  if (!precioCrudoValido(datos.currentPrice)) return err('El precio actual tiene que ser un número mayor a 0.');
+  return { ok: true, posicion: { ...base, currentPrice: datos.currentPrice, precioOrigen: 'manual', precioActualizado: opts.ahora } };
+}
+
+// Coherencia de los campos de vinculación (para revisar documentos, backups y fusiones).
+function validarVinculo(p) {
+  const problemas = [];
+  if (!p || typeof p !== 'object') return ['posicion-invalida'];
+  if (p.instrumentoId !== undefined && !textoNoVacio(p.instrumentoId)) problemas.push('instrumentoId-invalido');
+  if (p.precioOrigen !== undefined && p.precioOrigen !== null && p.precioOrigen !== 'auto' && p.precioOrigen !== 'manual') problemas.push('origen-invalido');
+  const v = p.vinculo;
+  if (v !== undefined && v !== null) {
+    if (typeof v !== 'object' || Array.isArray(v)) problemas.push('vinculo-invalido');
+    else if (tieneInstrumento(p)) {
+      if (v.instrumentoId !== p.instrumentoId) problemas.push('vinculo-incoherente');
+      if (v.hasta !== undefined) problemas.push('vinculo-cerrado-con-instrumento');
+    } else if (!textoNoVacio(v.hasta)) problemas.push('vinculo-abierto-sin-instrumento');
+  }
+  return problemas;
+}
+
+// Conflicto entre dos versiones de la MISMA posición (dos dispositivos). Propuesta para integrar
+// después en la fusión (NO está conectada): resuelve solo si difieren únicamente en el estado de precio.
+//   - manual le gana a automático (la acción del usuario no se pierde por una cotización de la máquina);
+//   - mismo origen: gana el precio más reciente; empate → remoto (política actual);
+//   - si difiere cualquier otro campo (units, instrumentoId, vinculo, platform...) devuelve null:
+//     queda la política vigente (se conserva la remota y se avisa).
+// Siempre devuelve una de las dos versiones COMPLETAS; nunca mezcla campos.
+function resolverConflictoPosicion(local, remoto) {
+  if (!local || !remoto || local.id !== remoto.id) return null;
+  const sinPrecio = x => { const c = { ...x }; CAMPOS_PRECIO.forEach(k => { delete c[k]; }); return c; };
+  if (!mismoValor(sinPrecio(local), sinPrecio(remoto))) return null;
+  const ml = local.precioOrigen === 'manual', mr = remoto.precioOrigen === 'manual';
+  if (ml !== mr) return ml ? local : remoto;
+  const tl = milis(local.precioActualizado), tr = milis(remoto.precioActualizado);
+  if (tl !== null && (tr === null || tl > tr)) return local;
+  return remoto;
+}
+// ==== FIN VINCULACIÓN DE POSICIONES ====
+
 const CRIPTO_CATALOGO = { label: 'Cripto', simbolos: ['Bitcoin', 'USDT (staking)'] };
 const PLATAFORMA_SUGERIDA_POR_CATEGORIA = { cedears:'IOL', acciones:'IOL', bonos:'IOL', obligaciones:'IOL', notas:'IOL', cripto:'BingX' };
 
